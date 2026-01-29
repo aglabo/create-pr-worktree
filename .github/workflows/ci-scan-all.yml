@@ -20,10 +20,6 @@ on:
       - releases
 
   pull_request:
-    branches:
-      - main
-      - master
-      - releases
 
   workflow_dispatch:
 
@@ -32,16 +28,18 @@ jobs:
     name: Actionlint
     permissions:
       contents: read
-    uses: aglabo/.github/.github/workflows/ci-common-lint-actionlint.yml@r1.1.0
+    uses: aglabo/.github/.github/workflows/ci-common-lint-actionlint.yml@r1.1.1
 
   ghalint:
     name: Ghalint
     permissions:
       contents: read
-    uses: aglabo/.github/.github/workflows/ci-common-lint-ghalint.yml@r1.1.0
+    uses: aglabo/.github/.github/workflows/ci-common-lint-ghalint.yml@r1.1.1
+    with:
+      config-file: ./configs/ghalint.yaml
 
   scan-gitleaks:
     name: Gitleaks Secret Scan
     permissions:
       contents: read
-    uses: aglabo/.github/.github/workflows/ci-common-scan-gitleaks.yml@r1.1.0
+    uses: aglabo/.github/.github/workflows/ci-common-scan-gitleaks.yml@r1.1.1
