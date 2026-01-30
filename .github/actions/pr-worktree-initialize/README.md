@@ -1,5 +1,8 @@
 # PR Worktree Initialize
 
+<!-- textlint-disable ja-technical-writing/sentence-length -->
+<!-- markdownlint-disable line-length -->
+
 Composite action to create a git worktree and configure gitsign for keyless signed commits using Sigstore.
 
 ## Overview
@@ -7,6 +10,7 @@ Composite action to create a git worktree and configure gitsign for keyless sign
 This action simplifies the process of creating a git worktree with gitsign configured for signing commits. It combines worktree creation, gitsign installation, and configuration into a single reusable step.
 
 **Key Features:**
+
 - Installs gitsign from official Sigstore releases
 - Verifies installation with checksum validation
 - Creates git worktree for isolated branch work
@@ -16,34 +20,36 @@ This action simplifies the process of creating a git worktree with gitsign confi
 ## Prerequisites
 
 **Required Permissions:**
+
 ```yaml
 permissions:
-  id-token: write  # Required for OIDC token access (gitsign keyless signing)
-  contents: write  # Required for git operations
+  id-token: write # Required for OIDC token access (gitsign keyless signing)
+  contents: write # Required for git operations
 ```
 
 **Runner Requirements:**
+
 - Linux runner (ubuntu-latest recommended)
 - Git 2.30+
 
 ## Inputs
 
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `branch-name` | Yes | - | Branch name for the worktree |
-| `worktree-dir` | Yes | - | Directory path for the worktree |
-| `gitsign-version` | No | `v0.14.0` | Gitsign version to install |
-| `user-name` | No | `github-actions[bot]` | Git user name for commits |
-| `user-email` | No | `github-actions[bot]@users.noreply.github.com` | Git user email for commits |
+| Input             | Required | Default                                        | Description                     |
+| ----------------- | -------- | ---------------------------------------------- | ------------------------------- |
+| `branch-name`     | Yes      | -                                              | Branch name for the worktree    |
+| `worktree-dir`    | Yes      | -                                              | Directory path for the worktree |
+| `gitsign-version` | No       | `v0.14.0`                                      | Gitsign version to install      |
+| `user-name`       | No       | `github-actions[bot]`                          | Git user name for commits       |
+| `user-email`      | No       | `github-actions[bot]@users.noreply.github.com` | Git user email for commits      |
 
 ## Outputs
 
-| Output | Description |
-|--------|-------------|
-| `worktree-path` | Absolute path to the created worktree |
-| `validation-status` | Gitsign validation status (ok, error, warning) |
-| `validation-message` | Validation status message |
-| `gitsign-version` | Installed gitsign version |
+| Output               | Description                                    |
+| -------------------- | ---------------------------------------------- |
+| `worktree-path`      | Absolute path to the created worktree          |
+| `validation-status`  | Gitsign validation status (ok, error, warning) |
+| `validation-message` | Validation status message                      |
+| `gitsign-version`    | Installed gitsign version                      |
 
 ## Usage
 
@@ -155,6 +161,9 @@ git verify-commit HEAD
 ```
 
 Expected output includes:
+
+<!-- cspell:words Fulcio Rekor -->
+
 - Fulcio certificate information
 - Rekor transparency log entry
 - GitHub Actions OIDC issuer information
@@ -166,6 +175,7 @@ Expected output includes:
 **Cause**: Missing `id-token: write` permission
 
 **Solution**: Add permission to workflow:
+
 ```yaml
 permissions:
   id-token: write
@@ -182,6 +192,7 @@ permissions:
 **Cause**: Network issue or invalid version
 
 **Solution**:
+
 - Check network connectivity
 - Verify gitsign-version is valid (see [releases](https://github.com/sigstore/gitsign/releases))
 - Try default version first
@@ -191,6 +202,7 @@ permissions:
 **Cause**: Configuration issue or OIDC token problem
 
 **Solution**:
+
 - Verify `id-token: write` permission is set
 - Check validation output in action logs
 - Ensure commits are made within the worktree directory
@@ -198,15 +210,18 @@ permissions:
 ## Security Considerations
 
 **No Long-Lived Secrets:**
+
 - Uses GitHub Actions OIDC for temporary certificates
 - No GPG keys to manage or store
 - Certificates are short-lived and tied to workflow run
 
 **Required Permissions:**
+
 - `id-token: write` - Only for OIDC token access
 - `contents: write` - Only for git operations
 
 **Transparency:**
+
 - All signatures are recorded in Rekor transparency log
 - Publicly auditable signing events
 
@@ -222,9 +237,9 @@ When a new gitsign version is released:
 
 ### Compatibility
 
-- **OS**: Linux only (ubuntu-latest recommended)
-- **Git**: 2.30+ recommended
-- **Gitsign**: 0.13.0+ supported
+- OS: Linux only (ubuntu-latest recommended)
+- Git: 2.30+ recommended
+- Gitsign: 0.13.0+ supported
 
 ## License
 
