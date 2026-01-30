@@ -100,10 +100,6 @@ jobs:
           # goto worktree directory
           cd ${{ steps.vars.outputs.worktree-dir }}
 
-          # add user signature for commit
-          git config --local user.name "github-actions[bot]"
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-
           # create a test file
           echo "#!/bin/bash" > test-create-pr.sh
           echo "echo 'This is a test file for create-pr-from-worktree action integration test.'" >> test-create-pr.sh
