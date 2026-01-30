@@ -108,7 +108,7 @@ runs:
         # Configure git to use gitsign
         git config --local commit.gpgsign true
         git config --local gpg.format x509
-        git config --local gpg.x509.program gitsign
+        git config --local gpg.x509.program ${RUNNER_TEMP}/bin/gitsign
 
         echo "✓ Gitsign configured"
 
@@ -140,7 +140,7 @@ runs:
         echo "=== Worktree Initialization Complete ==="
         echo "Worktree Path: ${{ steps.create_worktree.outputs.worktree_path }}"
         echo "Branch: ${{ inputs.branch-name }}"
-        echo "Gitsign Version: ${{ steps.verify_install.outputs.version }}"
+        echo "Gitsign Version: $( gitsign --version )"
         echo "Validation Status: ${{ steps.validate_gitsign.outputs.status }}"
         echo ""
         echo "Ready for signed commits using Sigstore keyless signing"
