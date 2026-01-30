@@ -106,8 +106,10 @@ echo ""
 
 # Install binary
 echo "Installing gitsign to ${INSTALL_DIR}..."
-mv gitsign "${INSTALL_DIR}/gitsign"
-chmod +x "${INSTALL_DIR}/gitsign"
+if ! install -m 755 gitsign "${INSTALL_DIR}/gitsign"; then
+  echo "::error::Failed to install gitsign to ${INSTALL_DIR}"
+  exit 1
+fi
 echo "✓ Binary installed"
 echo ""
 
