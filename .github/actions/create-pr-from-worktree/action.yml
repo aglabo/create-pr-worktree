@@ -169,8 +169,8 @@ runs:
           if ! PR_URL=$(timeout 60s gh pr create \
             --base $BASE_BRANCH \
             --head $HEAD_BRANCH \
-            --title '${{ inputs.pr-title }}' \
-            --body '${{ inputs.pr-body }}' 2>&1); then
+            --title "${{ inputs.pr-title }}" \
+            --body "${{ inputs.pr-body }}" 2>&1); then
             EXIT_CODE=$?
             if [ $EXIT_CODE -eq 124 ]; then
               echo "::error::GitHub API call (gh pr create) timed out after 60 seconds"
