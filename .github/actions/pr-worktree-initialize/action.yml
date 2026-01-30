@@ -79,14 +79,6 @@ runs:
           exit 1
         fi
 
-    - name: Verify gitsign version
-      id: verify_install
-      shell: bash
-      run: |
-        VERSION_OUTPUT=$(gitsign version | head -1)
-        echo "version=${VERSION_OUTPUT}" >> $GITHUB_OUTPUT
-        echo "Installed: ${VERSION_OUTPUT}"
-
     - name: Create worktree
       id: create_worktree
       shell: bash
