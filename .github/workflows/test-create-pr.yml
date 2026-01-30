@@ -14,7 +14,7 @@
 # - Tests PR creation/update with test labels
 # - Tests action outputs and error handling
 
-name: "[E2E]Test create-pr Action"
+name: "[E2E] Test create-pr Action"
 
 permissions:
   contents: write # Required for git push operations (step 4)
@@ -45,7 +45,7 @@ jobs:
         id: vars
         run: |
           base_branch=$(git symbolic-ref --short HEAD)  # Auto-detect base branch
-          pr_branch="test/create_pr"
+          pr_branch="tests/create_pr"
 
           # Fixed test values for integration testing
           {
@@ -102,28 +102,23 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd ${{ steps.vars.outputs.worktree-dir }}
-          echo "#!/bin/bash" > test-create-pr.sh
-          echo "echo 'This is a test file for create-pr-from-worktree action test.'" >> test-create-pr.sh
-          git add test-create-pr.sh
+
+          # Ensure tests directory exists
+          mkdir -p tests
+
+          # Create test script
+          cat > tests/test-create-pr.sh << 'EOF'
+          #!/usr/bin/env bash
+          echo 'This is a test file for create-pr-from-worktree action test.'
+          EOF
+
+          # Make script executable
+          chmod +x tests/test-create-pr.sh
+
+          # Stage and commit
+          git add tests/test-create-pr.sh
           git commit -m "test: add test-create-pr.sh for create-pr-from-worktree action test"
           git push origin ${{ steps.vars.outputs.PR_BRANCH }} --force
-
-      - name: Verify signed commit
-        run: |
-          cd ${{ steps.vars.outputs.worktree-dir }}
-          echo "=== Commit Signature (pushed) ==="
-
-          echo "cat-file"
-          git cat-file -t HEAD
-
-          # shallow clone か？
-          echo "is-shallow-repository:"
-          git rev-parse --is-shallow-repository
-          echo ""
-          # 署名付きか（gitsign/GPG 共通）
-          git log -1 --show-signature
-
-          echo "=== End of Commit Signature Verification ==="
 
       - name: create pr using composite action
         uses: ./.github/actions/create-pr-from-worktree

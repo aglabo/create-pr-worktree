@@ -1,0 +1,146 @@
+# src: ./.github/actions/pr-worktree-initialize/action.yml
+# @(#) : Composite action to initialize worktree with gitsign for signed commits
+#
+# Copyright (c) 2026- aglabo <https://github.com/aglabo>
+#
+# This software is released under the MIT License.
+# https://opensource.org/licenses/MIT
+
+name: PR Worktree Initialize
+description: Create a git worktree and configure gitsign for keyless signed commits using Sigstore
+author: atsushifx
+
+inputs:
+  branch-name:
+    description: "Branch name for the worktree"
+    required: true
+  worktree-dir:
+    description: "Directory path for the worktree"
+    required: true
+  gitsign-version:
+    description: "Gitsign version to install (e.g., v0.14.0)"
+    required: false
+    default: "v0.14.0"
+  user-name:
+    description: "Git user name for commits"
+    required: false
+    default: "github-actions[bot]"
+  user-email:
+    description: "Git user email for commits"
+    required: false
+    default: "github-actions[bot]@users.noreply.github.com"
+
+outputs:
+  worktree-path:
+    description: "Absolute path to the created worktree"
+    value: ${{ steps.create_worktree.outputs.worktree_path }}
+  validation-status:
+    description: "Gitsign validation status (ok, error, warning)"
+    value: ${{ steps.validate_gitsign.outputs.status }}
+  validation-message:
+    description: "Validation status message"
+    value: ${{ steps.validate_gitsign.outputs.message }}
+  gitsign-version:
+    description: "Installed gitsign version"
+    value: ${{ steps.verify_install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install gitsign
+      id: install_gitsign
+      shell: bash
+      env:
+        VERSION: ${{ inputs.gitsign-version }}
+      run: |
+        bash ${{ github.action_path }}/scripts/install-gitsign.sh
+
+    - name: Validate gitsign installation
+      id: validate_gitsign
+      shell: bash
+      run: |
+        OUTPUT=$(bash ${{ github.action_path }}/scripts/validate-gitsign.sh)
+        echo "$OUTPUT"
+
+        # Extract EXIT_STATUS line
+        STATUS_LINE=$(echo "$OUTPUT" | grep "^EXIT_STATUS=" | head -1)
+
+        # Extract status (ok|error|warning)
+        STATUS=$(echo "$STATUS_LINE" | cut -d= -f2 | cut -d: -f1)
+        echo "status=$STATUS" >> $GITHUB_OUTPUT
+
+        # Extract message
+        MESSAGE=$(echo "$STATUS_LINE" | cut -d= -f2 | cut -d: -f2-)
+        echo "message=$MESSAGE" >> $GITHUB_OUTPUT
+
+        # Fail if validation failed
+        if [ "$STATUS" = "error" ]; then
+          echo "::error::Gitsign validation failed: $MESSAGE"
+          exit 1
+        fi
+
+    - name: Create worktree
+      id: create_worktree
+      shell: bash
+      run: |
+        WORKTREE_DIR="${{ inputs.worktree-dir }}"
+        BRANCH_NAME="${{ inputs.branch-name }}"
+
+        echo "Creating worktree at: ${WORKTREE_DIR}"
+        echo "Branch: ${BRANCH_NAME}"
+
+        # Create worktree with branch
+        git worktree add -B "${BRANCH_NAME}" "${WORKTREE_DIR}"
+
+        # Get absolute path
+        WORKTREE_PATH=$(cd "${WORKTREE_DIR}" && pwd)
+        echo "worktree_path=${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+        echo "✓ Worktree created at: ${WORKTREE_PATH}"
+
+    - name: Configure gitsign in worktree
+      id: configure_gitsign
+      shell: bash
+      run: |
+        cd "${{ steps.create_worktree.outputs.worktree_path }}"
+
+        echo "Configuring gitsign for signed commits..."
+
+        # Configure git to use gitsign
+        git config --local commit.gpgsign true
+        git config --local gpg.format x509
+        git config --local gpg.x509.program ${RUNNER_TEMP}/bin/gitsign
+
+        echo "✓ Gitsign configured"
+
+        # Display configuration
+        echo ""
+        echo "Git signing configuration:"
+        git config --local --get-regexp 'commit\.gpgsign|gpg\.'
+
+    - name: Set git user configuration
+      id: configure_user
+      shell: bash
+      run: |
+        cd "${{ steps.create_worktree.outputs.worktree_path }}"
+
+        echo "Setting git user configuration..."
+
+        # Set user name and email
+        git config --local user.name "${{ inputs.user-name }}"
+        git config --local user.email "${{ inputs.user-email }}"
+
+        echo "✓ User configuration set"
+        echo "  Name:  ${{ inputs.user-name }}"
+        echo "  Email: ${{ inputs.user-email }}"
+
+    - name: Output validation results
+      shell: bash
+      run: |
+        echo ""
+        echo "=== Worktree Initialization Complete ==="
+        echo "Worktree Path: ${{ steps.create_worktree.outputs.worktree_path }}"
+        echo "Branch: ${{ inputs.branch-name }}"
+        echo "Gitsign Version: $( gitsign --version )"
+        echo "Validation Status: ${{ steps.validate_gitsign.outputs.status }}"
+        echo ""
+        echo "Ready for signed commits using Sigstore keyless signing"

@@ -1,5 +1,9 @@
 # Create PR from Worktree Action
 
+<!-- textlint-disable ja-technical-writing/sentence-length -->
+<!-- textlint-disable ja-technical-writing/max-comma -->
+<!-- markdownlint-disable line-length -->
+
 A reusable composite action that creates or updates Pull Requests from
 worktree with labels and auto-merge enabled.
 
@@ -22,17 +26,17 @@ detects the current branch as the PR head branch.
 
 ## Features
 
-- **Automatic Branch Detection**: Auto-detects current branch as PR head - no manual branch name configuration needed
-- **PR Creation/Update**: Creates new PRs or updates existing ones with
+- Automatic Branch Detection: Auto-detects current branch as PR head - no manual branch name configuration needed
+- PR Creation/Update: Creates new PRs or updates existing ones with
   title and body changes
-- **Flexible Labeling**: Auto-creates labels if they don't exist and
+- Flexible Labeling: Auto-creates labels if they don't exist and
   applies them to PRs
-- **Auto-Merge Support**: Enables auto-merge with configurable merge
+- Auto-Merge Support: Enables auto-merge with configurable merge
   methods (merge, squash, rebase)
-- **Branch Validation**: Verifies branches exist on remote before creating PR
-- **Idempotent**: Safe to run multiple times - updates existing PRs
+- Branch Validation: Verifies branches exist on remote before creating PR
+- Idempotent: Safe to run multiple times - updates existing PRs
   instead of failing
-- **Native GitHub CLI**: Uses `gh` CLI for maximum flexibility and reliability
+- Native GitHub CLI: Uses `gh` CLI for maximum flexibility and reliability
 
 ## Usage
 
@@ -74,7 +78,7 @@ detects the current branch as the PR head branch.
     pr-title: "feat: Add new feature"
     pr-body: "This PR requires manual review and approval."
     labels: "feature,needs-review"
-    merge-method: "never"  # Disable auto-merge
+    merge-method: "never" # Disable auto-merge
 ```
 
 ### Advanced Example
@@ -193,21 +197,15 @@ validations return `ok`:
 
 ## Inputs
 
-<!-- markdownlint-disable MD013 -->
-
-| Input          | Description                                                            | Required | Default      |
-| -------------- | ---------------------------------------------------------------------- | -------- | ------------ |
-| `base-branch`  | Base branch name (target branch for PR)                                | Yes      | -            |
-| `pr-title`     | Pull request title                                                     | Yes      | -            |
-| `pr-body`      | Pull request body/description                                          | Yes      | -            |
-| `labels`       | Comma-separated labels to add                                          | No       | `''` (empty) |
+| Input          | Description                                                                               | Required | Default      |
+| -------------- | ----------------------------------------------------------------------------------------- | -------- | ------------ |
+| `base-branch`  | Base branch name (target branch for PR)                                                   | Yes      | -            |
+| `pr-title`     | Pull request title                                                                        | Yes      | -            |
+| `pr-body`      | Pull request body/description                                                             | Yes      | -            |
+| `labels`       | Comma-separated labels to add                                                             | No       | `''` (empty) |
 | `merge-method` | Auto-merge method (`merge`/`squash`/`rebase`/`never`). Use `never` to disable auto-merge. | No       | `squash`     |
 
-<!-- markdownlint-enable MD013 -->
-
 ## Outputs
-
-<!-- markdownlint-disable MD013 -->
 
 | Output               | Description                                                           |
 | -------------------- | --------------------------------------------------------------------- |
@@ -216,8 +214,6 @@ validations return `ok`:
 | `pr-number`          | Created/updated PR number                                             |
 | `pr-url`             | Pull request URL                                                      |
 | `pr-operation`       | Operation performed (`created`, `updated`, `none`)                    |
-
-<!-- markdownlint-enable MD013 -->
 
 **Validation Status Values**:
 
@@ -345,14 +341,14 @@ steps:
 
 ## Limitations
 
-- **Requires pre-pushed branches**: Both base and current branches must
+- Requires pre-pushed branches: Both base and current branches must
   already exist on remote
-- **Requires checked-out branch**: Cannot run in detached HEAD state
-- **No git operations**: The action does not create branches, commit
+- Requires checked-out branch: Cannot run in detached HEAD state
+- No git operations: The action does not create branches, commit
   changes, or push code
-- **Single PR per branch pair**: One PR from current branch to
+- Single PR per branch pair: One PR from current branch to
   base branch at a time
-- **Linux only**: The action runs on Linux runners only
+- Linux only: The action runs on Linux runners only
 
 ## Troubleshooting
 
