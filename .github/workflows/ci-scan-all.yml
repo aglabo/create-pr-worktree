@@ -20,10 +20,6 @@ on:
       - releases
 
   pull_request:
-    branches:
-      - main
-      - master
-      - releases
 
   workflow_dispatch:
 
