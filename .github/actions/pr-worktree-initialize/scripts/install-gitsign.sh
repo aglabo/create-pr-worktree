@@ -91,12 +91,8 @@ if [ -z "${EXPECTED_CHECKSUM}" ]; then
   exit 1
 fi
 
-
 # Calculate actual checksum
 ACTUAL_CHECKSUM=$(sha256sum gitsign | awk '{print $1}')
-
-echo "Expected Checksum: ${EXPECTED_CHECKSUM}"
-echo "Actual Checksum:   ${ACTUAL_CHECKSUM}"
 
 if [ "${EXPECTED_CHECKSUM}" != "${ACTUAL_CHECKSUM}" ]; then
   echo "::error::Checksum verification failed!"
@@ -128,17 +124,7 @@ if ! "${INSTALL_DIR}/gitsign" version > /dev/null 2>&1; then
   exit 1
 fi
 
-VERSION_OUTPUT=$("${INSTALL_DIR}/gitsign" version)
-echo "✓ Installation verified"
-echo "${VERSION_OUTPUT}"
-echo ""
 
-# Cleanup
-echo "Cleaning up..."
-cd - > /dev/null
-rm -rf "${TEMP_DIR}"
-echo "✓ Cleanup complete"
-echo ""
 
 echo "=== gitsign installation complete ==="
 exit 0
