@@ -1,0 +1,12 @@
+# actionlint configuration
+# Documentation: https://github.com/rhysd/actionlint/blob/main/docs/config.md
+
+# Self-hosted runner configuration
+self-hosted-runner:
+  # Custom runner labels
+  labels:
+    - ubuntu-slim
+
+  # TODO(security):
+  # Replace null with explicit allow-list once variables are stabilized.
+  config-variables: null
