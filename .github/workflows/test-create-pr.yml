@@ -111,6 +111,9 @@ jobs:
           git add test-create-pr.sh
           git commit -m "test: add test-create-pr.sh for create-pr-from-worktree action test"
           git push origin ${{ steps.vars.outputs.PR_BRANCH }}
+          echo "--- git status in worktree ---"
+          git status
+          echo "--- git status in worktree ---"
 
       - name: create pr using composite action
         uses: ./.github/actions/create-pr-from-worktree
