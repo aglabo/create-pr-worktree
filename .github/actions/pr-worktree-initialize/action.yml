@@ -108,7 +108,7 @@ runs:
         # Configure git to use gitsign
         git config --local commit.gpgsign true
         git config --local gpg.format x509
-        git config --local gpg.x509.program ${RUNNER_TEMP}/bin/gitsign
+        git config --local gpg.x509.program gitsign
 
         echo "✓ Gitsign configured"
 
