@@ -40,7 +40,7 @@
 set -euo pipefail
 
 # Configuration
-VERSION="${VERSION:-v0.14.0}"
+VERSION="${VERSION:-0.14.0}"
 TEMP_DIR="${TEMP_DIR:-${RUNNER_TEMP}/gitsign-install}"
 INSTALL_DIR="${RUNNER_TEMP}/bin"
 BASE_URL="https://github.com/sigstore/gitsign/releases/download"
@@ -57,7 +57,7 @@ mkdir -p "${INSTALL_DIR}"
 
 # Download gitsign binary
 echo "Downloading gitsign binary..."
-BINARY_URL="${BASE_URL}/${VERSION}/${BINARY_NAME}"
+BINARY_URL="${BASE_URL}/${VERSION#v}/${BINARY_NAME}"
 echo "URL: ${BINARY_URL}"
 
 if ! curl -fsSL -o "${TEMP_DIR}/gitsign" "${BINARY_URL}"; then
