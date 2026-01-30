@@ -120,9 +120,8 @@ runs:
         PR_BRANCH="${{ inputs.pr-branch }}"
 
         # add user signature for commit
-        git config --local user.name "atsushifx[bot]"
-        git config --local user.email "atsushifx@gmail.com"
-
+        git config --local user.name "github-actions[bot]"
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
 
         # Check if PR already exists from head branch to base branch
         # Timeout after 30 seconds
@@ -160,7 +159,7 @@ runs:
           mkdir -p ${RUNNER_TEMP}/temp
           printf '%s\n' "${{ inputs.pr-body }}" > ${RUNNER_TEMP}/temp/pr_body.txt
           # Create PR with timeout (60 seconds for creation)
-          if ! timeout 60s gh pr create \
+          if ! gh pr create \
             --base "$BASE_BRANCH" \
             --head "$PR_BRANCH" \
             --title "${{ inputs.pr-title }}" \
