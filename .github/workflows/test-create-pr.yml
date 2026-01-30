@@ -61,7 +61,7 @@ jobs:
             echo "PR_BODY<<EOF"
             echo "## Integration Test PR"
             echo ""
-            echo "This PR is automatically created by the integration test workflow to verify the \`create-pr-from-worktree\` action."
+            echo "This PR is automatically created by the integration test workflow to verify the 'create-pr-from-worktree' action."
             echo ""
             echo "**Test Run Information:**"
             echo "- Workflow: ${{ github.workflow }}"
