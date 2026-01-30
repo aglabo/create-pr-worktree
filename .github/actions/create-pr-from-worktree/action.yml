@@ -143,7 +143,7 @@ runs:
           # Update PR title and body with timeout
           if ! timeout 30s gh pr edit "$EXISTING_PR" \
             --title "${{ inputs.pr-title }}" \
-            --body ${RUNNER_TEMP}/temp/pr_body.txt 2>&1; then
+            --body-file ${RUNNER_TEMP}/temp/pr_body.txt 2>&1; then
             EXIT_CODE=$?
             if [ $EXIT_CODE -eq 124 ]; then
               echo "::error::GitHub API call (gh pr edit) timed out after 30 seconds"
@@ -163,7 +163,7 @@ runs:
             --base "$BASE_BRANCH" \
             --head "$PR_BRANCH" \
             --title "${{ inputs.pr-title }}" \
-            --body ${RUNNER_TEMP}/temp/pr_body.txt 2>&1; then
+            --body-file ${RUNNER_TEMP}/temp/pr_body.txt 2>&1; then
             EXIT_CODE=$?
             if [ $EXIT_CODE -eq 124 ]; then
               echo "::error::GitHub API call (gh pr create) timed out after 60 seconds"
@@ -307,3 +307,4 @@ runs:
         echo "✓ Enabled auto-merge (${{ inputs.merge-method }})"
 
         echo "Note: PR will auto-merge once all required checks pass and approvals are received"
+
