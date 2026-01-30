@@ -53,7 +53,7 @@ jobs:
             echo "PR_BRANCH=${pr_branch}"
             echo "LABELS=test,automated,integration-test"
             echo "MERGE_METHOD=never"
-            echo "worktree-dir=.worktree/work-temp"
+            echo "worktree-dir=${RUNNER_TEMP}/gitworktree/work-temp"
           } >> "$GITHUB_OUTPUT"
 
           # PR body with timestamp to verify updates
