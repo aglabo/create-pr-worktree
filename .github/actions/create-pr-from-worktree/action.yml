@@ -118,10 +118,10 @@ runs:
       run: |
         BASE_BRANCH="${{ steps.detect.outputs.base-branch }}"
         PR_BRANCH="${{ inputs.pr-branch }}"
+        git switch "$PR_BRANCH"
 
         # Check if PR already exists from head branch to base branch
         # Timeout after 30 seconds
-        git sw "$PR_BRANCH"
         if ! EXISTING_PR=$(timeout 30s gh pr list --head "$PR_BRANCH" --base "$BASE_BRANCH" --json number --jq '.[0].number' 2>&1); then
           EXIT_CODE=$?
           if [ $EXIT_CODE -eq 124 ]; then
