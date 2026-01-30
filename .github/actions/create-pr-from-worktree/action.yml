@@ -167,8 +167,8 @@ runs:
 
           # Create PR with timeout (60 seconds for creation)
           if ! PR_URL=$(timeout 60s gh pr create \
-            --base $BASE_BRANCH \
-            --head $HEAD_BRANCH \
+            --base "$BASE_BRANCH" \
+            --head "$PR_BRANCH" \
             --title "${{ inputs.pr-title }}" \
             --body "${{ inputs.pr-body }}" 2>&1); then
             EXIT_CODE=$?
