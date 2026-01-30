@@ -112,8 +112,17 @@ jobs:
         run: |
           cd ${{ steps.vars.outputs.worktree-dir }}
           echo "=== Commit Signature (pushed) ==="
-          git log -1 --show-signature
+
+          echo "cat-file"
+          git cat-file -t HEAD
+
+          # shallow clone か？
+          echo "is-shallow-repository:"
+          git rev-parse --is-shallow-repository
           echo ""
+          # 署名付きか（gitsign/GPG 共通）
+          git log -1 --show-signature
+
           echo "=== End of Commit Signature Verification ==="
 
       - name: create pr using composite action
