@@ -20,10 +20,6 @@ on:
       - releases
 
   pull_request:
-    branches:
-      - main
-      - master
-      - releases
 
   workflow_dispatch:
 
@@ -39,6 +35,8 @@ jobs:
     permissions:
       contents: read
     uses: aglabo/.github/.github/workflows/ci-common-lint-ghalint.yml@r1.1.1
+    with:
+      config-file: ./configs/ghalint.yaml
 
   scan-gitleaks:
     name: Gitleaks Secret Scan
