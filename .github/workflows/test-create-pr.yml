@@ -106,21 +106,21 @@ jobs:
           echo "echo 'This is a test file for create-pr-from-worktree action test.'" >> test-create-pr.sh
           git add test-create-pr.sh
           git commit -m "test: add test-create-pr.sh for create-pr-from-worktree action test"
-          echo "--- check signed commit ---"
-          git log -1 --show-signature
+
+          echo "=== Commit Signature (commit) ==="
+          gitsign verify HEAD
+          echo ""
+          echo "=== End of Commit Signature Verification ==="
 
           git push origin ${{ steps.vars.outputs.PR_BRANCH }} --force
-
-          echo "--- check signed commit (pushed) ---"
-          git log -1 --show-signature
-
-          echo "--- end ---"
 
       - name: Verify signed commit
         run: |
           cd ${{ steps.vars.outputs.worktree-dir }}
-          echo "=== Commit Signature Verification ==="
-          git log -1 --show-signature
+          echo "=== Commit Signature (pushed) ==="
+          gitsign verify HEAD
+          echo ""
+          echo "=== End of Commit Signature Verification ==="
 
       - name: create pr using composite action
         uses: ./.github/actions/create-pr-from-worktree
