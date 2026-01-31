@@ -91,8 +91,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Initialize worktree with gitsign
-        id: init-worktree
-        uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-initialize@v0.0.1
+        id: setup
+        uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-setup@v0.0.1
         with:
           branch-name: ${{ steps.vars.outputs.PR_BRANCH }}
           worktree-dir: ${{ steps.vars.outputs.worktree-dir }}
@@ -131,6 +131,6 @@ jobs:
           merge-method: ${{ steps.vars.outputs.MERGE_METHOD }}
 
       - name: cleanup worktree
+        id: cleanup
         if: always()
-        run: |
-          git worktree remove ${{ steps.vars.outputs.worktree-dir }} --force
+        uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-cleanup@v0.0.1
