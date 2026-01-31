@@ -28,8 +28,14 @@ excludes:
   - policy_name: action_ref_should_be_full_length_commit_sha
     workflow_file_path: .github/workflows/test-create-pr.yml
     job_name: test-action
-    step_id: init-worktree
-    action_name: aglabo/create-pr-sandbox/.github/actions/pr-worktree-initialize
+    step_id: setup
+    action_name: aglabo/create-pr-sandbox/.github/actions/pr-worktree-setup
+
+  - policy_name: action_ref_should_be_full_length_commit_sha
+    workflow_file_path: .github/workflows/test-create-pr.yml
+    job_name: test-action
+    step_id: cleanup
+    action_name: aglabo/create-pr-sandbox/.github/actions/pr-worktree-cleanup
 
   # Allow persist-credentials: true for git push operations
   - policy_name: checkout_persist_credentials_should_be_false
