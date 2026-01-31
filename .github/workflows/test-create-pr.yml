@@ -91,8 +91,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Initialize worktree with gitsign
-        uses: ./.github/actions/pr-worktree-initialize
-        id: init_worktree
+        id: init-worktree
+        uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-initialize@v0.0.1
         with:
           branch-name: ${{ steps.vars.outputs.PR_BRANCH }}
           worktree-dir: ${{ steps.vars.outputs.worktree-dir }}
