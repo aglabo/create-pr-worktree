@@ -1,0 +1,108 @@
+# src: ./.github/actions/pr-worktree-cleanup/action.yml
+# @(#) : Composite action to clean up worktree created by pr-worktree-initialize
+#
+# Copyright (c) 2026- aglabo <https://github.com/aglabo>
+#
+# This software is released under the MIT License.
+# https://opensource.org/licenses/MIT
+
+name: PR Worktree Cleanup
+description: Remove a git worktree created by pr-worktree-initialize
+author: atsushifx
+
+inputs:
+  worktree-dir:
+    description: "Directory path of the worktree to remove (optional, auto-detected if not provided)"
+    required: false
+  base-branch:
+    description: "Base branch to exclude from cleanup (optional, auto-detected if not provided)"
+    required: false
+  force:
+    description: "Force removal even if worktree has uncommitted changes"
+    required: false
+    default: "true"
+
+outputs:
+  cleanup-status:
+    description: "Status of cleanup operation (success, warning, error)"
+    value: ${{ steps.cleanup_worktree.outputs.status }}
+  removed-path:
+    description: "Path of the removed worktree"
+    value: ${{ steps.get_worktree.outputs.worktree-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Get worktree path
+      id: get_worktree
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.worktree-dir }}" ]; then
+          # Use provided worktree-dir
+          WORKTREE_PATH="${{ inputs.worktree-dir }}"
+          echo "Using provided worktree path: ${WORKTREE_PATH}"
+        else
+          # Auto-detect worktree
+          if [ -n "${{ inputs.base-branch }}" ]; then
+            BASE_BRANCH="${{ inputs.base-branch }}"
+          else
+            BASE_BRANCH=$(git symbolic-ref --short HEAD)
+          fi
+
+          echo "Auto-detecting worktree (excluding base branch: ${BASE_BRANCH})"
+          WORKTREE_PATH=$(git worktree list | grep -v "${BASE_BRANCH}" | awk '{print $1}')
+
+          if [ -n "${WORKTREE_PATH}" ]; then
+            echo "Found worktree at: ${WORKTREE_PATH}"
+          else
+            echo "No worktree found"
+          fi
+        fi
+
+        echo "worktree-path=${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+
+    - name: Cleanup worktree
+      id: cleanup_worktree
+      if: steps.get_worktree.outputs.worktree-path != ''
+      shell: bash
+      run: |
+        WORKTREE_PATH="${{ steps.get_worktree.outputs.worktree-path }}"
+
+        echo "Removing worktree at: ${WORKTREE_PATH}"
+
+        # Build remove command with force flag if needed
+        FORCE_FLAG=""
+        if [ "${{ inputs.force }}" = "true" ]; then
+          FORCE_FLAG="--force"
+        fi
+
+        # Execute removal
+        if git worktree remove ${FORCE_FLAG} "${WORKTREE_PATH}"; then
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "✓ Removed worktree at: ${WORKTREE_PATH}"
+        else
+          echo "status=error" >> $GITHUB_OUTPUT
+          echo "::error::Failed to remove worktree at: ${WORKTREE_PATH}"
+          exit 1
+        fi
+
+    - name: Output cleanup results
+      if: always()
+      shell: bash
+      run: |
+        WORKTREE_PATH="${{ steps.get_worktree.outputs.worktree-path }}"
+        STATUS="${{ steps.cleanup_worktree.outputs.status }}"
+
+        echo ""
+        echo "=== Worktree Cleanup Complete ==="
+
+        if [ -z "${WORKTREE_PATH}" ]; then
+          echo "Status: warning (no worktree found)"
+        elif [ "${STATUS}" = "success" ]; then
+          echo "Status: success"
+          echo "Removed Path: ${WORKTREE_PATH}"
+        else
+          echo "Status: ${STATUS}"
+          echo "Worktree Path: ${WORKTREE_PATH}"
+        fi
+        echo ""
