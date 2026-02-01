@@ -59,7 +59,16 @@ runs:
           echo "Auto-detecting worktree (excluding base branch: ${BASE_BRANCH})"
 
           # Get list of worktrees excluding base branch
-          WORKTREE_LIST=$(git worktree list | grep -v "${BASE_BRANCH}" | awk '{print $1}')
+          WORKTREE_LIST=$(
+            git worktree list --porcelain |
+              awk -v base="${BASE_BRANCH}" '
+                /^worktree / { path=$2 }
+                /^branch / {
+                  gsub("refs/heads/", "", $2)
+                  if ($2 != base) print path
+                }
+                '
+            )
 
           # Count worktrees first
           if [ -z "${WORKTREE_LIST}" ]; then
@@ -124,15 +133,12 @@ runs:
 
         # Check for uncommitted changes if force=false
         if [ "${{ inputs.force }}" = "false" ]; then
-          cd "${WORKTREE_PATH}"
-          if [ -n "$(git status --porcelain)" ]; then
+          if [ -n "$(git -C "${WORKTREE_PATH}" status --porcelain)" ]; then
             echo "status=error" >> $GITHUB_OUTPUT
             echo "message=Cannot remove worktree with uncommitted changes (force=false): ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
             echo "::error::Cannot remove worktree with uncommitted changes. Set force=true to override: ${WORKTREE_PATH}"
-            cd - > /dev/null
             exit 0
           fi
-          cd - > /dev/null
         fi
 
         echo "Validation passed for worktree: ${WORKTREE_PATH}"
