@@ -6,7 +6,7 @@
 # This software is released under the MIT License.
 # https://opensource.org/licenses/MIT
 
-name: PR Worktree Initialize
+name: PR Worktree Setup
 description: Create a git worktree and configure gitsign for keyless signed commits using Sigstore
 author: atsushifx
 
@@ -40,9 +40,6 @@ outputs:
   validation-message:
     description: "Validation status message"
     value: ${{ steps.validate_gitsign.outputs.message }}
-  gitsign-version:
-    description: "Installed gitsign version"
-    value: ${{ steps.verify_install.outputs.version }}
 
 runs:
   using: composite
@@ -53,7 +50,7 @@ runs:
       env:
         VERSION: ${{ inputs.gitsign-version }}
       run: |
-        bash ${{ github.action_path }}/scripts/install-gitsign.sh
+        bash ${{ github.action_path }}/scripts/install-gitsign.sh ${{inputs.gitsign-version }}
 
     - name: Validate gitsign installation
       id: validate_gitsign
@@ -140,7 +137,7 @@ runs:
         echo "=== Worktree Initialization Complete ==="
         echo "Worktree Path: ${{ steps.create_worktree.outputs.worktree_path }}"
         echo "Branch: ${{ inputs.branch-name }}"
-        echo "Gitsign Version: $( gitsign --version )"
+        echo "Gitsign Version: $( gitsign --version | head -1)"
         echo "Validation Status: ${{ steps.validate_gitsign.outputs.status }}"
         echo ""
         echo "Ready for signed commits using Sigstore keyless signing"
