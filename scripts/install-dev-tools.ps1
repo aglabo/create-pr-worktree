@@ -72,7 +72,7 @@ $WinGetPackages = @(
     "opencode,SST.opencode",
 
     # Shell Script development
-    "shellcheck,koalaman.shellcheck",
+    "shellcheck,koalaman.shellcheck"
 )
 
 ##
@@ -102,9 +102,15 @@ $PnpmPackages = @(
     "@secretlint/secretlint-rule-preset-recommend",
 
     # Spell checker for code and documentation
-    "cspell",
+    "cspell"
+)
 
-
+##
+# @description Git repositories to clone
+# @var array of repository specifications (url,path)
+$GitRepositories = @(
+    # Shell script testing framework
+    "https://github.com/shellspec/shellspec.git,.tools/shellspec"
 )
 
 
@@ -119,12 +125,14 @@ $PnpmPackages = @(
 #   1. Installs winget packages
 #   2. Installs scoop packages
 #   3. Installs pnpm packages
-#   4. Reports completion status
+#   4. Clones Git repositories
+#   5. Reports completion status
 #
 # @return 0 Always succeeds (errors reported but don't stop execution)
 # @global $WinGetPackages Array of winget packages to install
 # @global $ScoopPackages Array of scoop packages to install
 # @global $PnpmPackages Array of pnpm packages to install
+# @global $GitRepositories Array of Git repositories to clone
 # @example
 #   Install-DevelopmentTools
 function Install-DevelopmentTools {
@@ -137,6 +145,9 @@ function Install-DevelopmentTools {
 
     Write-Host "Installing pnpm packages..." -ForegroundColor Cyan
     $PnpmPackages | Install-PnpmPackages
+
+    Write-Host "Cloning Git repositories..." -ForegroundColor Cyan
+    $GitRepositories | Install-GitRepositories
 
 }
 
