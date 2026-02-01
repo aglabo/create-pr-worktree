@@ -206,3 +206,72 @@ function Install-PnpmPackages {
     }
 }
 
+<#
+.SYNOPSIS
+    Clone Git repositories in batch
+
+.DESCRIPTION
+    Accepts repository list in "url,path" format via parameter or pipeline and clones
+    them using git. Automatically filters out empty lines and comments (lines starting with #).
+    Creates parent directories if they don't exist.
+
+.PARAMETER Repositories
+    Array of repository specifications in "url,path" format
+    Can be provided via pipeline
+
+.EXAMPLE
+    Install-GitRepositories -Repositories @("https://github.com/shellspec/shellspec.git,.tools/shellspec")
+
+.EXAMPLE
+    "https://github.com/shellspec/shellspec.git,.tools/shellspec" | Install-GitRepositories
+
+.EXAMPLE
+    @("https://github.com/shellspec/shellspec.git,.tools/shellspec") | Install-GitRepositories
+#>
+function Install-GitRepositories {
+    [CmdletBinding()]
+    param (
+        [Parameter(ValueFromPipeline = $true)]
+        [string[]]$Repositories
+    )
+
+    begin { $repoList = @() }
+    process {
+        foreach ($repo in $Repositories) {
+            if ($repo -and ($repo -notmatch '^\s*#')) {
+                $repoList += $repo
+            }
+        }
+    }
+    end {
+        if ($repoList.Count -eq 0) {
+            Write-Warning " No valid repositories to clone."
+            return
+        }
+
+        foreach ($repo in $repoList) {
+            ($url, $path) = $repo.Split(",").Trim()
+
+            # Create parent directory if it doesn't exist
+            $parentDir = Split-Path -Parent $path
+            if ($parentDir -and -not (Test-Path $parentDir)) {
+                New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
+            }
+
+            # Clone repository if it doesn't exist
+            if (Test-Path $path) {
+                Write-Host " Already exists: $path (skipping)" -ForegroundColor Yellow
+            } else {
+                Write-Host " Cloning: $url → $path" -ForegroundColor Cyan
+                try {
+                    git clone $url $path
+                    Write-Host " ✅ Cloned successfully: $path" -ForegroundColor Green
+                } catch {
+                    Write-Warning "❌ Clone failed: $url"
+                }
+            }
+        }
+        Write-Host "✅ Git repositories processed." -ForegroundColor Green
+    }
+}
+
