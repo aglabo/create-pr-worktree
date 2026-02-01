@@ -23,9 +23,12 @@ inputs:
     default: "false"
 
 outputs:
-  cleanup-status:
+  status:
     description: "Status of cleanup operation (success, skipped, error)"
-    value: ${{ steps.cleanup_worktree.outputs.status }}
+    value: ${{ steps.get_worktree.outputs.status || steps.validate_worktree.outputs.status || steps.cleanup_worktree.outputs.status }}
+  message:
+    description: "Detailed message about the cleanup operation"
+    value: ${{ steps.get_worktree.outputs.message || steps.validate_worktree.outputs.message || steps.cleanup_worktree.outputs.message }}
   removed-path:
     description: "Path of the removed worktree"
     value: ${{ steps.get_worktree.outputs.worktree-path }}
@@ -38,7 +41,8 @@ runs:
       shell: bash
       run: |
         WORKTREE_PATH=""
-        SHOULD_SKIP="false"
+        STATUS=""
+        MESSAGE=""
 
         if [ -n "${{ inputs.worktree-dir }}" ]; then
           # Use provided worktree-dir
@@ -69,12 +73,14 @@ runs:
           # Decide: continue or skip based on count
           if [ "${WORKTREE_COUNT}" -eq 0 ]; then
             echo "::notice::No worktrees found to clean up (excluding base branch: ${BASE_BRANCH})"
-            SHOULD_SKIP="true"
+            STATUS="skipped"
+            MESSAGE="No worktrees found to clean up (excluding base branch: ${BASE_BRANCH})"
           elif [ "${WORKTREE_COUNT}" -gt 1 ]; then
             echo "::notice::Multiple worktrees found (${WORKTREE_COUNT}), skipping auto-detection. Please specify worktree-dir explicitly."
             echo "Available worktrees:"
             echo "${WORKTREE_LIST}"
-            SHOULD_SKIP="true"
+            STATUS="skipped"
+            MESSAGE="Multiple worktrees found (${WORKTREE_COUNT}), specify worktree-dir explicitly"
           else
             # Exactly 1 worktree: continue with cleanup
             WORKTREE_PATH="${WORKTREE_LIST}"
@@ -83,40 +89,62 @@ runs:
         fi
 
         echo "worktree-path=${WORKTREE_PATH}" >> $GITHUB_OUTPUT
-        echo "should-skip=${SHOULD_SKIP}" >> $GITHUB_OUTPUT
+        echo "status=${STATUS}" >> $GITHUB_OUTPUT
+        echo "message=${MESSAGE}" >> $GITHUB_OUTPUT
 
-    - name: Cleanup worktree
-      id: cleanup_worktree
-      if: always()
+    - name: Validate worktree
+      id: validate_worktree
+      if: steps.get_worktree.outputs.status != 'skipped'
       shell: bash
       run: |
-        SHOULD_SKIP="${{ steps.get_worktree.outputs.should-skip }}"
         WORKTREE_PATH="${{ steps.get_worktree.outputs.worktree-path }}"
 
-        # Skip if determined by get_worktree step
-        if [ "${SHOULD_SKIP}" = "true" ]; then
-          echo "status=skipped" >> $GITHUB_OUTPUT
-          echo "Skipping cleanup (no valid worktree to clean up)"
-          exit 0
-        fi
-
-        # Handle empty worktree path (should not happen if should-skip works correctly)
+        # Check if worktree path is provided
         if [ -z "${WORKTREE_PATH}" ]; then
           echo "status=skipped" >> $GITHUB_OUTPUT
-          echo "No worktree to clean up"
+          echo "message=No worktree path specified" >> $GITHUB_OUTPUT
           exit 0
         fi
 
-        echo "Removing worktree at: ${WORKTREE_PATH}"
+        # Check if directory exists
+        if [ ! -d "${WORKTREE_PATH}" ]; then
+          echo "status=error" >> $GITHUB_OUTPUT
+          echo "message=Worktree directory does not exist: ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+          echo "::error::Worktree directory does not exist: ${WORKTREE_PATH}"
+          exit 0
+        fi
+
+        # Validate it's a git worktree (check for .git file)
+        if [ ! -e "${WORKTREE_PATH}/.git" ]; then
+          echo "status=error" >> $GITHUB_OUTPUT
+          echo "message=Directory is not a valid git worktree: ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+          echo "::error::Directory is not a valid git worktree: ${WORKTREE_PATH}"
+          exit 0
+        fi
 
         # Check for uncommitted changes if force=false
         if [ "${{ inputs.force }}" = "false" ]; then
           cd "${WORKTREE_PATH}"
           if [ -n "$(git status --porcelain)" ]; then
-            echo "::warning::Uncommitted changes exist in worktree"
+            echo "status=error" >> $GITHUB_OUTPUT
+            echo "message=Cannot remove worktree with uncommitted changes (force=false): ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+            echo "::error::Cannot remove worktree with uncommitted changes. Set force=true to override: ${WORKTREE_PATH}"
+            cd - > /dev/null
+            exit 0
           fi
           cd - > /dev/null
         fi
+
+        echo "Validation passed for worktree: ${WORKTREE_PATH}"
+
+    - name: Cleanup worktree
+      id: cleanup_worktree
+      if: steps.validate_worktree.result == 'success' && steps.get_worktree.outputs.status != 'skipped' && steps.validate_worktree.outputs.status != 'skipped' && steps.validate_worktree.outputs.status != 'error'
+      shell: bash
+      run: |
+        WORKTREE_PATH="${{ steps.get_worktree.outputs.worktree-path }}"
+
+        echo "Removing worktree at: ${WORKTREE_PATH}"
 
         # Build remove command with force flag if needed
         FORCE_FLAG=""
@@ -127,9 +155,11 @@ runs:
         # Execute removal
         if git worktree remove ${FORCE_FLAG} "${WORKTREE_PATH}"; then
           echo "status=success" >> $GITHUB_OUTPUT
+          echo "message=Worktree removed successfully: ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
           echo "✓ Removed worktree at: ${WORKTREE_PATH}"
         else
           echo "status=error" >> $GITHUB_OUTPUT
+          echo "message=Failed to remove worktree: ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
           echo "::error::Failed to remove worktree at: ${WORKTREE_PATH}"
           exit 1
         fi
@@ -140,18 +170,19 @@ runs:
       if: always()
       shell: bash
       run: |
+        STATUS="${{ steps.get_worktree.outputs.status || steps.validate_worktree.outputs.status || steps.cleanup_worktree.outputs.status }}"
+        MESSAGE="${{ steps.get_worktree.outputs.message || steps.validate_worktree.outputs.message || steps.cleanup_worktree.outputs.message }}"
         WORKTREE_PATH="${{ steps.get_worktree.outputs.worktree-path }}"
-        STATUS="${{ steps.cleanup_worktree.outputs.status }}"
 
         echo ""
         echo "=== Worktree Cleanup Complete ==="
         echo "Status: ${STATUS}"
 
-        if [ "${STATUS}" = "success" ]; then
+        if [ -n "${MESSAGE}" ]; then
+          echo "Message: ${MESSAGE}"
+        fi
+
+        if [ "${STATUS}" = "success" ] && [ -n "${WORKTREE_PATH}" ]; then
           echo "Removed Path: ${WORKTREE_PATH}"
-        elif [ "${STATUS}" = "skipped" ]; then
-          echo "Reason: No worktree found to clean up"
-        elif [ "${STATUS}" = "error" ]; then
-          echo "Worktree Path: ${WORKTREE_PATH}"
         fi
         echo ""
