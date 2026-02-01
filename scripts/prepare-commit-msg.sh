@@ -299,19 +299,25 @@ get_model_command() {
 # 1. Loads commit-message-generator.md template
 # 2. Appends git context (logs + diff) as AI input
 # 3. Pipes combined input to AI command
-# 4. Extracts message between === commit header === markers
+# 4. Extracts message from either markdown code blocks or header markers
 # 5. Validates markers exist and message is non-empty
 #
 # **Input Format to AI:**
 #   cat template.md | cat logs | cat diff | <AI_COMMAND>
 #
-# **Required Template Output:**
-#   === commit header ===
-#   <commit message here>
-#   === commit footer ===
+# **Supported Output Formats:**
+#   Format 1 (Header markers - traditional):
+#     === commit header ===
+#     <commit message here>
+#     === commit footer ===
+#
+#   Format 2 (Markdown code block - fallback):
+#     ```text
+#     <commit message here>
+#     ```
 #
 # Execution flow:
-#   Template + Context → AI → Validate Markers → Extract Message → Return
+#   Template + Context → AI → Try Markers → Fallback to Code Block → Return
 #
 # @arg $1 string Optional test message (for testing/debugging only)
 # @return 0 If generation and validation succeeds
@@ -357,23 +363,28 @@ generate_commit_message() {
     after_diff="$full_output"
   fi
 
-  # Validate that message markers exist in AI output
-  if ! echo "$after_diff" | grep -q '^=== commit header ==='; then
-    echo "Error: commit message markers not found in AI output" >&2
-    echo "Debug output:" >&2
-    echo "$full_output" >&2
-    return 1
+  local extracted_msg=""
+
+  # Format 1: Try extracting from standard markers (traditional format)
+  if echo "$after_diff" | grep -q '^=== commit header ==='; then
+    extracted_msg=$(echo "$after_diff" | \
+      sed -n '/^=== commit header ===/,/^=== commit footer ===/p' | \
+      sed '1d;$d')
   fi
 
-  # Extract content between message markers
-  local extracted_msg
-  extracted_msg=$(echo "$after_diff" | \
-    sed -n '/^=== commit header ===/,/^=== commit footer ===/p' | \
-    sed '1d;$d')
+  # Format 2: If not found, try markdown code blocks (```text...```)
+  if [[ -z "$extracted_msg" ]] && echo "$after_diff" | grep -q '^```text'; then
+    extracted_msg=$(echo "$after_diff" | \
+      sed -n '/^```text$/,/^```$/p' | \
+      sed '1d;$d')
+  fi
 
-  # Validate extracted message is not empty
+  # If still not found, report error
   if [[ -z "$extracted_msg" ]]; then
-    echo "Error: extracted commit message is empty" >&2
+    echo "Error: commit message not found in AI output" >&2
+    echo "Expected format: either '=== commit header ===' markers or '```text...```' code blocks" >&2
+    echo "Debug output:" >&2
+    echo "$full_output" >&2
     return 1
   fi
 
