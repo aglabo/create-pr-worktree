@@ -20,11 +20,11 @@ inputs:
   force:
     description: "Force removal even if worktree has uncommitted changes"
     required: false
-    default: "true"
+    default: "false"
 
 outputs:
   cleanup-status:
-    description: "Status of cleanup operation (success, warning, error)"
+    description: "Status of cleanup operation (success, skipped, error)"
     value: ${{ steps.cleanup_worktree.outputs.status }}
   removed-path:
     description: "Path of the removed worktree"
@@ -37,12 +37,15 @@ runs:
       id: get_worktree
       shell: bash
       run: |
+        WORKTREE_PATH=""
+        SHOULD_SKIP="false"
+
         if [ -n "${{ inputs.worktree-dir }}" ]; then
           # Use provided worktree-dir
           WORKTREE_PATH="${{ inputs.worktree-dir }}"
           echo "Using provided worktree path: ${WORKTREE_PATH}"
         else
-          # Auto-detect worktree
+          # Auto-detect worktree: First count, then decide
           if [ -n "${{ inputs.base-branch }}" ]; then
             BASE_BRANCH="${{ inputs.base-branch }}"
           else
@@ -50,25 +53,70 @@ runs:
           fi
 
           echo "Auto-detecting worktree (excluding base branch: ${BASE_BRANCH})"
-          WORKTREE_PATH=$(git worktree list | grep -v "${BASE_BRANCH}" | awk '{print $1}')
 
-          if [ -n "${WORKTREE_PATH}" ]; then
-            echo "Found worktree at: ${WORKTREE_PATH}"
+          # Get list of worktrees excluding base branch
+          WORKTREE_LIST=$(git worktree list | grep -v "${BASE_BRANCH}" | awk '{print $1}')
+
+          # Count worktrees first
+          if [ -z "${WORKTREE_LIST}" ]; then
+            WORKTREE_COUNT=0
           else
-            echo "No worktree found"
+            WORKTREE_COUNT=$(echo "${WORKTREE_LIST}" | wc -l)
+          fi
+
+          echo "Found ${WORKTREE_COUNT} worktree(s) excluding base branch"
+
+          # Decide: continue or skip based on count
+          if [ "${WORKTREE_COUNT}" -eq 0 ]; then
+            echo "::notice::No worktrees found to clean up (excluding base branch: ${BASE_BRANCH})"
+            SHOULD_SKIP="true"
+          elif [ "${WORKTREE_COUNT}" -gt 1 ]; then
+            echo "::notice::Multiple worktrees found (${WORKTREE_COUNT}), skipping auto-detection. Please specify worktree-dir explicitly."
+            echo "Available worktrees:"
+            echo "${WORKTREE_LIST}"
+            SHOULD_SKIP="true"
+          else
+            # Exactly 1 worktree: continue with cleanup
+            WORKTREE_PATH="${WORKTREE_LIST}"
+            echo "Found worktree at: ${WORKTREE_PATH}"
           fi
         fi
 
         echo "worktree-path=${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+        echo "should-skip=${SHOULD_SKIP}" >> $GITHUB_OUTPUT
 
     - name: Cleanup worktree
       id: cleanup_worktree
-      if: steps.get_worktree.outputs.worktree-path != ''
+      if: always()
       shell: bash
       run: |
+        SHOULD_SKIP="${{ steps.get_worktree.outputs.should-skip }}"
         WORKTREE_PATH="${{ steps.get_worktree.outputs.worktree-path }}"
 
+        # Skip if determined by get_worktree step
+        if [ "${SHOULD_SKIP}" = "true" ]; then
+          echo "status=skipped" >> $GITHUB_OUTPUT
+          echo "Skipping cleanup (no valid worktree to clean up)"
+          exit 0
+        fi
+
+        # Handle empty worktree path (should not happen if should-skip works correctly)
+        if [ -z "${WORKTREE_PATH}" ]; then
+          echo "status=skipped" >> $GITHUB_OUTPUT
+          echo "No worktree to clean up"
+          exit 0
+        fi
+
         echo "Removing worktree at: ${WORKTREE_PATH}"
+
+        # Check for uncommitted changes if force=false
+        if [ "${{ inputs.force }}" = "false" ]; then
+          cd "${WORKTREE_PATH}"
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::warning::Uncommitted changes exist in worktree"
+          fi
+          cd - > /dev/null
+        fi
 
         # Build remove command with force flag if needed
         FORCE_FLAG=""
@@ -86,6 +134,8 @@ runs:
           exit 1
         fi
 
+        exit 0
+
     - name: Output cleanup results
       if: always()
       shell: bash
@@ -95,14 +145,13 @@ runs:
 
         echo ""
         echo "=== Worktree Cleanup Complete ==="
+        echo "Status: ${STATUS}"
 
-        if [ -z "${WORKTREE_PATH}" ]; then
-          echo "Status: warning (no worktree found)"
-        elif [ "${STATUS}" = "success" ]; then
-          echo "Status: success"
+        if [ "${STATUS}" = "success" ]; then
           echo "Removed Path: ${WORKTREE_PATH}"
-        else
-          echo "Status: ${STATUS}"
+        elif [ "${STATUS}" = "skipped" ]; then
+          echo "Reason: No worktree found to clean up"
+        elif [ "${STATUS}" = "error" ]; then
           echo "Worktree Path: ${WORKTREE_PATH}"
         fi
         echo ""
