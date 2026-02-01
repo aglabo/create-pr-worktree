@@ -66,13 +66,13 @@ Set-StrictMode -Version Latest
 # @var array of package specifications (packageName, packageId)
 $WinGetPackages = @(
     # AI agent - Claude Code CLI for AI-assisted development
-    "Anthoropic.ClaudeCode",
-    "GitHub.Copilor",
-    "OpenAI.codex",
-    "SST.opencode",
+    "claude,Anthropic.ClaudeCode",
+    "copilot,GitHub.Copilot",
+    "codex,OpenAI.Codex",
+    "opencode,SST.opencode",
 
     # Shell Script development
-    "koalaman.shellcheck",
+    "shellcheck,koalaman.shellcheck",
 )
 
 ##
