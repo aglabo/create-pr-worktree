@@ -34,12 +34,12 @@ outputs:
   worktree-path:
     description: "Absolute path to the created worktree"
     value: ${{ steps.create_worktree.outputs.worktree_path }}
-  validation-status:
-    description: "Gitsign validation status (ok, error, warning)"
-    value: ${{ steps.validate_gitsign.outputs.status }}
-  validation-message:
-    description: "Validation status message"
-    value: ${{ steps.validate_gitsign.outputs.message }}
+  status:
+    description: "Overall setup status (success, error, warning)"
+    value: ${{ steps.set_final_status.outputs.status }}
+  message:
+    description: "Status message with detailed information"
+    value: ${{ steps.set_final_status.outputs.message }}
 
 runs:
   using: composite
@@ -70,14 +70,14 @@ runs:
         MESSAGE=$(echo "$STATUS_LINE" | cut -d= -f2 | cut -d: -f2-)
         echo "message=$MESSAGE" >> $GITHUB_OUTPUT
 
-        # Fail if validation failed
+        # Log error if validation failed (but don't exit 1)
         if [ "$STATUS" = "error" ]; then
           echo "::error::Gitsign validation failed: $MESSAGE"
-          exit 1
         fi
 
     - name: Create worktree
       id: create_worktree
+      if: steps.validate_gitsign.outputs.status != 'error'
       shell: bash
       run: |
         WORKTREE_DIR="${{ inputs.worktree-dir }}"
@@ -86,16 +86,34 @@ runs:
         echo "Creating worktree at: ${WORKTREE_DIR}"
         echo "Branch: ${BRANCH_NAME}"
 
+        # Check if branch already exists
+        if git show-ref --verify --quiet "refs/heads/${BRANCH_NAME}"; then
+          echo "::error::Branch already exists: ${BRANCH_NAME}"
+          echo "::error::Cannot create worktree with -B flag as it would force-reset the existing branch"
+          echo "::error::Please use a different branch name or delete the existing branch first"
+          echo "status=failed" >> $GITHUB_OUTPUT
+          echo "message=Branch already exists: ${BRANCH_NAME}" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
         # Create worktree with branch
-        git worktree add -B "${BRANCH_NAME}" "${WORKTREE_DIR}"
+        if ! git worktree add -B "${BRANCH_NAME}" "${WORKTREE_DIR}"; then
+          echo "::error::Failed to create worktree"
+          echo "status=failed" >> $GITHUB_OUTPUT
+          echo "message=Failed to create worktree at ${WORKTREE_DIR}" >> $GITHUB_OUTPUT
+          exit 0
+        fi
 
         # Get absolute path
         WORKTREE_PATH=$(cd "${WORKTREE_DIR}" && pwd)
         echo "worktree_path=${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "message=Worktree created successfully" >> $GITHUB_OUTPUT
         echo "✓ Worktree created at: ${WORKTREE_PATH}"
 
     - name: Configure gitsign in worktree
       id: configure_gitsign
+      if: steps.create_worktree.outputs.status == 'success' && steps.validate_gitsign.outputs.status != 'error'
       shell: bash
       run: |
         cd "${{ steps.create_worktree.outputs.worktree_path }}"
@@ -116,6 +134,7 @@ runs:
 
     - name: Set git user configuration
       id: configure_user
+      if: steps.create_worktree.outputs.status == 'success' && steps.validate_gitsign.outputs.status != 'error'
       shell: bash
       run: |
         cd "${{ steps.create_worktree.outputs.worktree_path }}"
@@ -130,6 +149,43 @@ runs:
         echo "  Name:  ${{ inputs.user-name }}"
         echo "  Email: ${{ inputs.user-email }}"
 
+    - name: Set final status
+      id: set_final_status
+      shell: bash
+      run: |
+        # Collect status from all steps
+        GITSIGN_STATUS="${{ steps.validate_gitsign.outputs.status }}"
+        GITSIGN_MESSAGE="${{ steps.validate_gitsign.outputs.message }}"
+        WORKTREE_STATUS="${{ steps.create_worktree.outputs.status }}"
+        WORKTREE_MESSAGE="${{ steps.create_worktree.outputs.message }}"
+
+        # Default to success if all steps completed
+        FINAL_STATUS="success"
+        FINAL_MESSAGE="Worktree setup completed successfully"
+
+        # Check for failures first (priority: failed/error > warning > success)
+        if [ "$GITSIGN_STATUS" = "error" ]; then
+          # Gitsign validation failed - worktree creation was skipped
+          FINAL_STATUS="failed"
+          FINAL_MESSAGE="Setup failed: $GITSIGN_MESSAGE"
+        elif [ -z "$WORKTREE_STATUS" ]; then
+          # Worktree creation was skipped (likely due to gitsign error)
+          FINAL_STATUS="skipped"
+          FINAL_MESSAGE="Worktree creation skipped due to previous errors"
+        elif [ "$WORKTREE_STATUS" = "failed" ]; then
+          # Worktree creation failed
+          FINAL_STATUS="failed"
+          FINAL_MESSAGE="$WORKTREE_MESSAGE"
+        elif [ "$GITSIGN_STATUS" = "warning" ]; then
+          # Gitsign validation had warnings
+          FINAL_STATUS="warning"
+          FINAL_MESSAGE="Worktree setup completed with warnings: $GITSIGN_MESSAGE"
+        fi
+
+        # Set outputs
+        echo "status=$FINAL_STATUS" >> $GITHUB_OUTPUT
+        echo "message=$FINAL_MESSAGE" >> $GITHUB_OUTPUT
+
     - name: Output validation results
       shell: bash
       run: |
@@ -138,6 +194,7 @@ runs:
         echo "Worktree Path: ${{ steps.create_worktree.outputs.worktree_path }}"
         echo "Branch: ${{ inputs.branch-name }}"
         echo "Gitsign Version: $( gitsign --version | head -1)"
-        echo "Validation Status: ${{ steps.validate_gitsign.outputs.status }}"
+        echo "Setup Status: ${{ steps.set_final_status.outputs.status }}"
+        echo "Message: ${{ steps.set_final_status.outputs.message }}"
         echo ""
         echo "Ready for signed commits using Sigstore keyless signing"
