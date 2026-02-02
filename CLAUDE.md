@@ -48,6 +48,54 @@ claude は、以下の事項を守ってください。
 2. 透明性 > 効率性 - 署名と監査証跡を残す
 3. 明示的 > 暗黙的 - パラメータはデフォルトに頼らない
 
+### 必須パターン: Validation Step Dependencies
+
+**セキュリティクリティカルな条件式**:
+
+```yaml
+# ✅ REQUIRED: Fail-Fast Validation (outcome のみチェック)
+if: steps.previous_step.outcome == 'success'
+```
+
+**理由**:
+
+- バリデーションエラーは即座に `exit 1` で失敗する (fail-fast パターン)
+- `outcome == 'success'` のみで十分な検証が可能
+- GitHub Actions が outcome を必ず設定 (success/failure/cancelled/skipped)
+
+**バリデーションステップパターン**:
+
+```yaml
+# バリデーションエラーは exit 1 で即座に失敗
+- name: Validate something
+  id: validate
+  shell: bash
+  run: |
+    if [ "$ERROR_CONDITION" ]; then
+      echo "::error::Validation failed: reason"
+      exit 1  # 即座に失敗
+    fi
+    echo "status=success" >> $GITHUB_OUTPUT  # 成功時のみ
+```
+
+**禁止パターン**:
+
+```yaml
+# ❌ NEVER: 空文字列でbypass可能
+if: steps.previous_step.outputs.status != 'error'
+
+# ❌ NEVER: エラー時に exit 0 (pr-worktree-cleanup の skip 処理を除く)
+if [ "$ERROR" ]; then
+  echo "status=error" >> $GITHUB_OUTPUT
+  exit 0  # これは禁止
+fi
+```
+
+**例外**:
+
+- `status=skipped` + `exit 0` は許容 (pr-worktree-cleanup でワークツリーが見つからない場合)
+- スクリプトベースのバリデーション (`validate-environ.sh`, `validate-branches.sh`) は `status` 出力を使用可能
+
 ## 技術コンテキスト (第2層)
 
 ### 技術スタック
