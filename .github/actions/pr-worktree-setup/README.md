@@ -46,11 +46,11 @@ permissions:
 
 ## Outputs
 
-| Output               | Description                                 |
-| -------------------- | ------------------------------------------- |
-| `worktree-path`      | 作成された worktree の絶対パス              |
-| `validation-status`  | Gitsign 検証ステータス (ok, error, warning) |
-| `validation-message` | 検証ステータスメッセージ                    |
+| Output          | Description                                                      |
+| --------------- | ---------------------------------------------------------------- |
+| `worktree-path` | 作成された worktree の絶対パス                                   |
+| `status`        | セットアップステータス (success, failed, warning, skipped)       |
+| `message`       | ステータスの詳細メッセージ                                       |
 
 ## Usage
 
