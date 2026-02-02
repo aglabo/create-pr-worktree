@@ -1,5 +1,5 @@
-# src: ./.github/actions/pr-worktree-initialize/action.yml
-# @(#) : Composite action to initialize worktree with gitsign for signed commits
+# src: ./.github/actions/pr-worktree-setup/action.yml
+# @(#) : create git worktree and setup gitsign for signed commits
 #
 # Copyright (c) 2026- aglabo <https://github.com/aglabo>
 #
@@ -50,7 +50,29 @@ runs:
       env:
         VERSION: ${{ inputs.gitsign-version }}
       run: |
-        bash ${{ github.action_path }}/scripts/install-gitsign.sh ${{inputs.gitsign-version }}
+        OUTPUT=$(bash ${{ github.action_path }}/scripts/install-gitsign.sh ${{inputs.gitsign-version }} 2>&1)
+        echo "$OUTPUT"
+
+        # Extract status and path from script output
+        STATUS_LINE=$(echo "$OUTPUT" | grep "^EXIT_STATUS=" | head -1)
+        PATH_LINE=$(echo "$OUTPUT" | grep "^GITSIGN_PATH=" | head -1)
+
+        # Parse status
+        STATUS=$(echo "$STATUS_LINE" | cut -d= -f2 | cut -d: -f1)
+        MESSAGE=$(echo "$STATUS_LINE" | cut -d= -f2 | cut -d: -f2-)
+
+        # Parse gitsign path
+        GITSIGN_PATH=$(echo "$PATH_LINE" | cut -d= -f2)
+
+        # Set outputs
+        echo "status=$STATUS" >> $GITHUB_OUTPUT
+        echo "message=$MESSAGE" >> $GITHUB_OUTPUT
+        echo "gitsign_path=$GITSIGN_PATH" >> $GITHUB_OUTPUT
+
+        # Log error if installation failed (but don't exit 1)
+        if [ "$STATUS" = "error" ]; then
+          echo "::error::Gitsign installation failed: $MESSAGE"
+        fi
 
     - name: Validate gitsign installation
       id: validate_gitsign
@@ -75,9 +97,42 @@ runs:
           echo "::error::Gitsign validation failed: $MESSAGE"
         fi
 
+    - name: Validate worktree directory
+      id: validate_directory
+      if: steps.validate_gitsign.outputs.status != 'error'
+      shell: bash
+      run: |
+        WORKTREE_DIR="${{ inputs.worktree-dir }}"
+
+        # Check if directory already exists
+        if [ -e "${WORKTREE_DIR}" ]; then
+          echo "::error::Directory already exists: ${WORKTREE_DIR}"
+          echo "::error::Cannot create worktree at existing location"
+          echo "::error::Please remove the directory first or choose a different path"
+          echo "status=error" >> $GITHUB_OUTPUT
+          echo "message=Directory already exists: ${WORKTREE_DIR}" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        # Try to create directory (validates parent directory exists and is writable)
+        if ! mkdir -p "${WORKTREE_DIR}"; then
+          echo "::error::Failed to create directory: ${WORKTREE_DIR}"
+          echo "::error::Check parent directory permissions or path validity"
+          echo "status=error" >> $GITHUB_OUTPUT
+          echo "message=Failed to create directory: ${WORKTREE_DIR}" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        # Remove the directory (git worktree add will create it)
+        rmdir "${WORKTREE_DIR}"
+
+        echo "status=ok" >> $GITHUB_OUTPUT
+        echo "message=Directory validation passed" >> $GITHUB_OUTPUT
+        echo "✓ Worktree directory validation passed"
+
     - name: Create worktree
       id: create_worktree
-      if: steps.validate_gitsign.outputs.status != 'error'
+      if: steps.validate_gitsign.outputs.status != 'error' && steps.validate_directory.outputs.status == 'ok'
       shell: bash
       run: |
         WORKTREE_DIR="${{ inputs.worktree-dir }}"
@@ -123,7 +178,7 @@ runs:
         # Configure git to use gitsign
         git config --local commit.gpgsign true
         git config --local gpg.format x509
-        git config --local gpg.x509.program ${RUNNER_TEMP}/bin/gitsign
+        git config --local gpg.x509.program "${{ steps.install_gitsign.outputs.gitsign_path }}"
 
         echo "✓ Gitsign configured"
 
@@ -153,9 +208,11 @@ runs:
       id: set_final_status
       shell: bash
       run: |
-        # Collect status from all steps
+        # Collect status from all validation steps
         GITSIGN_STATUS="${{ steps.validate_gitsign.outputs.status }}"
         GITSIGN_MESSAGE="${{ steps.validate_gitsign.outputs.message }}"
+        DIRECTORY_STATUS="${{ steps.validate_directory.outputs.status }}"
+        DIRECTORY_MESSAGE="${{ steps.validate_directory.outputs.message }}"
         WORKTREE_STATUS="${{ steps.create_worktree.outputs.status }}"
         WORKTREE_MESSAGE="${{ steps.create_worktree.outputs.message }}"
 
@@ -163,21 +220,21 @@ runs:
         FINAL_STATUS="success"
         FINAL_MESSAGE="Worktree setup completed successfully"
 
-        # Check for failures first (priority: failed/error > warning > success)
+        # Check for failures (priority: error > failed > warning > success)
         if [ "$GITSIGN_STATUS" = "error" ]; then
-          # Gitsign validation failed - worktree creation was skipped
           FINAL_STATUS="failed"
           FINAL_MESSAGE="Setup failed: $GITSIGN_MESSAGE"
+        elif [ "$DIRECTORY_STATUS" = "error" ]; then
+          FINAL_STATUS="failed"
+          FINAL_MESSAGE="Setup failed: $DIRECTORY_MESSAGE"
         elif [ -z "$WORKTREE_STATUS" ]; then
-          # Worktree creation was skipped (likely due to gitsign error)
+          # Worktree creation was skipped (due to validation errors)
           FINAL_STATUS="skipped"
-          FINAL_MESSAGE="Worktree creation skipped due to previous errors"
+          FINAL_MESSAGE="Worktree creation skipped due to validation errors"
         elif [ "$WORKTREE_STATUS" = "failed" ]; then
-          # Worktree creation failed
           FINAL_STATUS="failed"
           FINAL_MESSAGE="$WORKTREE_MESSAGE"
         elif [ "$GITSIGN_STATUS" = "warning" ]; then
-          # Gitsign validation had warnings
           FINAL_STATUS="warning"
           FINAL_MESSAGE="Worktree setup completed with warnings: $GITSIGN_MESSAGE"
         fi
