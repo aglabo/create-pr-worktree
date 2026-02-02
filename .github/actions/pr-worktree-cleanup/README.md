@@ -1,69 +1,239 @@
 # PR Worktree Cleanup
 
 <!-- textlint-disable ja-technical-writing/sentence-length -->
+<!-- textlint-disable ja-technical-writing/no-exclamation-question-mark -->
 <!-- markdownlint-disable line-length -->
 
-Composite action to safely remove a git worktree created by pr-worktree-setup.
+Composite action to safely and idempotently remove git worktrees.
+
+## TL;DR
+
+- Always specify `worktree-dir` explicitly in production (auto-detection is fallback, less reliable)
+- Use `if: always() && steps.init.outcome == 'success'` as base pattern (ensures rerun safety)
+- Use `reason` output to distinguish all 12 result patterns (success/skipped/error all have reasons)
+
+---
 
 ## Overview
 
-This action provides safe and idempotent cleanup of git worktrees. It pairs with the `pr-worktree-setup` action to provide complete worktree lifecycle management.
+### What This Action Does
 
-**Key Features:**
+Safely removes git worktrees created by `pr-worktree-setup`. Key features:
 
-- Validates worktree exists before attempting removal
-- Verifies directory is actually a git worktree
-- Idempotent behavior (safe to run multiple times)
-- Graceful handling of already-removed worktrees
-- Detailed status reporting for cleanup operations
-- Designed to work with `if: always()` for guaranteed cleanup
+- Safety: Multi-layer validation prevents accidental deletion
+- Idempotency: Safe to run multiple times (rerun-safe)
+- Transparency: Detailed reason codes explain results
+- Fail-fast: Validation errors fail immediately (CLAUDE.md compliant)
 
-## Prerequisites
+### Main Features
 
-**Minimal Requirements:**
+- Worktree existence and git registration validation
+- Uncommitted changes detection (controlled by force option)
+- Safe skip when multiple worktrees exist
+- Rich outputs (status + 12 reason codes)
+- Guaranteed cleanup with `if: always()`
 
-- Git 2.30+
-- Worktree must be managed by git (created with `git worktree add`)
+---
 
-**Recommended Usage:**
+## Quick Start (Recommended Pattern)
 
-Use with `pr-worktree-setup` action for complete workflow:
+Most safe and recommended usage:
 
 ```yaml
-- name: Initialize worktree
-  id: init-worktree
-  uses: ./.github/actions/pr-worktree-setup
-  with:
-    branch-name: feature/my-branch
-    worktree-dir: ${{ runner.temp }}/worktree
+name: PR Automation Workflow
 
-# ... do work in worktree ...
+permissions:
+  contents: write
 
-- name: Cleanup worktree
-  if: always()
-  uses: ./.github/actions/pr-worktree-cleanup
-  with:
-    worktree-dir: ${{ steps.init-worktree.outputs.worktree-path }}
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Initialize worktree
+      - name: Initialize worktree
+        id: init
+        uses: ./.github/actions/pr-worktree-setup
+        with:
+          branch-name: feature/my-feature
+          worktree-dir: ${{ runner.temp }}/pr-worktree
+
+      # Do work
+      - name: Make changes
+        run: |
+          cd ${{ steps.init.outputs.worktree-path }}
+          # ... work ...
+
+      # Cleanup (always runs)
+      - name: Cleanup worktree
+        if: always() && steps.init.outcome == 'success'
+        uses: ./.github/actions/pr-worktree-cleanup
+        with:
+          worktree-dir: ${{ steps.init.outputs.worktree-path }} # Explicit path
 ```
 
-## Inputs
+Key points:
 
-| Input          | Required | Default | Description                                                                    |
-| -------------- | -------- | ------- | ------------------------------------------------------------------------------ |
-| `worktree-dir` | No       | -       | Directory path of the worktree to remove (auto-detected if not provided)       |
-| `base-branch`  | No       | -       | Base branch to exclude from cleanup (auto-detected if not provided)            |
-| `force`        | No       | `true`  | Force removal even if worktree has uncommitted changes                         |
+1. Always specify `worktree-dir`: Auto-detection is fallback (see below)
+2. Use `if: always() && steps.init.outcome == 'success'`: Ensures rerun safety
+3. Pass `worktree-path` output: Direct pass from initialization step
 
-## Outputs
+---
 
-| Output           | Description                                    |
-| ---------------- | ---------------------------------------------- |
-| `cleanup-status` | Status of cleanup operation (success, warning, error) |
-| `removed-path`   | Path of the removed worktree                   |
+## Prerequisites (REQUIRED)
 
-## Usage
+### Required Preconditions
 
-### Basic Usage with if: always()
+Before using this action, you MUST satisfy:
+
+| Precondition         | Description                                                      |
+| -------------------- | ---------------------------------------------------------------- |
+| Repository checkout  | Checked out with `actions/checkout@v4` or equivalent             |
+| Worktree creation    | Created by `pr-worktree-setup` or `git worktree add`             |
+| Same job execution   | Must run in the same job where worktree was created              |
+| Linux runner         | ubuntu-latest recommended (Windows/macOS not supported)          |
+| Git repository       | `.git` directory must exist                                      |
+| Base branch checkout | Only required for auto-detection (not needed with explicit path) |
+
+### NOT Supported
+
+Following scenarios are NOT supported and will fail or behave unexpectedly:
+
+| Scenario                                | Reason                                                         |
+| --------------------------------------- | -------------------------------------------------------------- |
+| Cleanup worktree from different job     | Filesystem not shared between jobs                             |
+| Job rerun with worktree already removed | Use `if: steps.init.outcome == 'success'` to avoid             |
+| Windows/macOS runners                   | Not tested, no guarantees                                      |
+| Non-git directories                     | Not registered as git worktree                                 |
+| Manual removal before action            | Will safely skip with `status=skipped, reason=already-removed` |
+
+### Required Permissions and Runner
+
+Workflow permissions:
+
+```yaml
+permissions:
+  contents: write # Required for git operations
+```
+
+Runner requirements:
+
+- OS: Linux (amd64) - ubuntu-latest recommended
+- Git: 2.30+ recommended (for worktree stability)
+
+---
+
+## Inputs and Outputs
+
+### Inputs
+
+| Input          | Required | Default | Description                                                                                       |
+| -------------- | -------- | ------- | ------------------------------------------------------------------------------------------------- |
+| `worktree-dir` | No       | -       | [Strongly Recommended] Path to worktree to remove. Explicit specification recommended (see below) |
+| `base-branch`  | No       | -       | Base branch to exclude from auto-detection (fallback: GITHUB_BASE_REF → main)                     |
+| `force`        | No       | `false` | Force removal even with uncommitted changes                                                       |
+
+#### Importance of worktree-dir
+
+Always specify explicitly in production:
+
+| Specification | Benefits                      | Drawbacks                     |
+| ------------- | ----------------------------- | ----------------------------- |
+| Explicit      | Rerun-safe, debuggable, clear | None (recommended)            |
+| Auto-detect   | Less code                     | Rerun fails, complex, fragile |
+
+Auto-detection limitations:
+
+- Fails on job reruns (worktree already removed)
+- Skips with `reason=multiple` when multiple worktrees exist
+- Requires base branch checkout
+- Difficult to debug
+
+Recommended pattern:
+
+```yaml
+# Recommended
+- id: init
+  uses: ./.github/actions/pr-worktree-setup
+  with:
+    worktree-dir: ${{ runner.temp }}/pr-worktree
+
+- uses: ./.github/actions/pr-worktree-cleanup
+  with:
+    worktree-dir: ${{ steps.init.outputs.worktree-path }}
+
+# Not recommended (fallback acceptable)
+- uses: ./.github/actions/pr-worktree-cleanup
+  # worktree-dir not specified = auto-detection
+```
+
+### Outputs
+
+| Output           | Type   | Description                                                 |
+| ---------------- | ------ | ----------------------------------------------------------- |
+| `status`         | string | Cleanup status (`success`/`skipped`/`error`)                |
+| `reason`         | string | Unified reason code explaining result (12 types, see below) |
+| `message`        | string | Human-readable detailed message                             |
+| `removed-path`   | string | Path of removed worktree (empty if not removed)             |
+| `worktree-count` | number | Number of worktrees found in auto-detection (0 if explicit) |
+| `worktree-list`  | string | Newline-separated worktree paths from auto-detection        |
+
+#### Complete Reason Code Reference
+
+Single `reason` field explains all situations (12 types):
+
+| status    | reason             | Meaning                                                     |
+| --------- | ------------------ | ----------------------------------------------------------- |
+| `success` | `removed`          | Clean worktree removed successfully                         |
+| `success` | `removed-dirty`    | Worktree with uncommitted changes removed (force=true)      |
+| `skipped` | `no-path`          | No worktree-dir specified and auto-detection not applicable |
+| `skipped` | `already-removed`  | Directory doesn't exist (idempotent - already cleaned)      |
+| `skipped` | `multiple`         | Multiple worktrees found in auto-detection                  |
+| `skipped` | `no-worktrees`     | No worktrees found in auto-detection                        |
+| `error`   | `not-registered`   | Path exists but not registered as git worktree              |
+| `error`   | `missing-marker`   | `.git` file missing (corrupted)                             |
+| `error`   | `invalid-worktree` | Not a valid git working tree                                |
+| `error`   | `uncommitted`      | Uncommitted changes exist with force=false                  |
+| `error`   | `git-failed`       | Git command execution failed                                |
+| `error`   | `removal-failed`   | `git worktree remove` command failed                        |
+
+#### Reason Code Usage Examples
+
+Check if worktree was actually removed:
+
+```yaml
+- if: steps.cleanup.outputs.reason == 'removed' || steps.cleanup.outputs.reason == 'removed-dirty'
+  run: echo "Worktree was removed"
+```
+
+Detect uncommitted changes scenarios:
+
+```yaml
+# Force removed
+- if: steps.cleanup.outputs.reason == 'removed-dirty'
+  run: echo "::warning::Uncommitted changes were force-removed"
+
+# Rejected by force=false
+- if: steps.cleanup.outputs.reason == 'uncommitted'
+  run: echo "::error::Cleanup failed due to uncommitted changes"
+```
+
+Handle auto-detection issues:
+
+```yaml
+- if: steps.cleanup.outputs.reason == 'multiple'
+  run: |
+    echo "::warning::Multiple worktrees detected"
+    echo "Count: ${{ steps.cleanup.outputs.worktree-count }}"
+    echo "List: ${{ steps.cleanup.outputs.worktree-list }}"
+```
+
+---
+
+## Usage Patterns
+
+### Basic Pattern: with if: always()
 
 ```yaml
 - name: Cleanup worktree
@@ -73,80 +243,33 @@ Use with `pr-worktree-setup` action for complete workflow:
     worktree-dir: ${{ runner.temp }}/my-worktree
 ```
 
-The `if: always()` condition ensures cleanup runs even if previous steps fail.
+`if: always()` ensures cleanup runs even if previous steps fail.
 
-### Integration with pr-worktree-setup
-
-```yaml
-name: Create Signed PR
-
-permissions:
-  id-token: write
-  contents: write
-  pull-requests: write
-
-jobs:
-  create-pr:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Initialize worktree with gitsign
-        id: init-worktree
-        uses: ./.github/actions/pr-worktree-setup
-        with:
-          branch-name: feature/my-feature
-          worktree-dir: ${{ runner.temp }}/pr-worktree
-
-      - name: Make changes
-        run: |
-          cd ${{ steps.init-worktree.outputs.worktree-path }}
-          echo "# New Feature" > feature.md
-          git add feature.md
-          git commit -m "feat: add new feature"
-          git push origin feature/my-feature
-
-      - name: Create PR
-        run: |
-          gh pr create --title "Add new feature" --body "..."
-
-      - name: Cleanup worktree
-        if: always()
-        uses: ./.github/actions/pr-worktree-cleanup
-        with:
-          worktree-dir: ${{ steps.init-worktree.outputs.worktree-path }}
-```
-
-### Safe Removal (No Force)
+### Safe Pattern: force=false (default)
 
 ```yaml
-- name: Cleanup worktree safely
+- name: Safe cleanup
   uses: ./.github/actions/pr-worktree-cleanup
   with:
     worktree-dir: ${{ runner.temp }}/worktree
-    force: false
+    force: false # Default, can be explicit
 ```
 
-With `force: false`, removal will fail if the worktree has uncommitted changes. This is useful when you want to ensure no work is lost.
+Fails with `reason=uncommitted` if uncommitted changes exist.
 
-### Auto-Detection Mode
+### Force Removal: force=true
 
 ```yaml
-- name: Cleanup worktree (auto-detect)
-  if: always()
+- name: Force cleanup
   uses: ./.github/actions/pr-worktree-cleanup
+  with:
+    worktree-dir: ${{ runner.temp }}/worktree
+    force: true # Also removes uncommitted changes
 ```
 
-When no inputs are provided, the action automatically:
+Succeeds with `reason=removed-dirty` if uncommitted changes exist.
 
-1. Detects the current branch as the base branch
-2. Finds the first worktree that is NOT the base branch
-3. Removes the detected worktree
-
-This is useful when you have a single worktree and want automatic cleanup without tracking worktree paths.
-
-### Handling Cleanup Status
+### Advanced: Reason Code Branching
 
 ```yaml
 - name: Cleanup worktree
@@ -156,176 +279,415 @@ This is useful when you have a single worktree and want automatic cleanup withou
   with:
     worktree-dir: ${{ runner.temp }}/worktree
 
-- name: Check cleanup status
+- name: Handle results
   if: always()
   run: |
-    echo "Cleanup status: ${{ steps.cleanup.outputs.cleanup-status }}"
-    if [ "${{ steps.cleanup.outputs.cleanup-status }}" = "error" ]; then
-      echo "::warning::Worktree cleanup failed, may need manual cleanup"
-    fi
+    case "${{ steps.cleanup.outputs.reason }}" in
+      removed)
+        echo "Success: Clean removal"
+        ;;
+      removed-dirty)
+        echo "Warning: Removed with uncommitted changes (force=true)"
+        ;;
+      already-removed)
+        echo "Skip: Already removed (idempotent)"
+        ;;
+      uncommitted)
+        echo "Error: Uncommitted changes prevent removal (force=false)"
+        exit 1
+        ;;
+      multiple)
+        echo "Skip: Multiple worktrees detected, explicit specification needed"
+        echo "Count: ${{ steps.cleanup.outputs.worktree-count }}"
+        ;;
+      *)
+        echo "Other: ${{ steps.cleanup.outputs.message }}"
+        ;;
+    esac
+
+- name: Warn on force removal
+  if: always() && steps.cleanup.outputs.reason == 'removed-dirty'
+  run: |
+    echo "::warning::Uncommitted changes were removed"
+    echo "Path: ${{ steps.cleanup.outputs.removed-path }}"
+
+- name: Handle errors
+  if: always() && steps.cleanup.outputs.status == 'error'
+  run: |
+    echo "::error::Cleanup failed (reason: ${{ steps.cleanup.outputs.reason }})"
+    echo "::error::${{ steps.cleanup.outputs.message }}"
+    exit 1
 ```
+
+### Auto-Detection Mode (Not Recommended, Fallback)
+
+Warning: Auto-detection is a fallback feature. Do not use in production.
+
+```yaml
+- name: Auto-detect cleanup
+  if: always()
+  uses: ./.github/actions/pr-worktree-cleanup
+  # No worktree-dir = auto-detection
+```
+
+How auto-detection works:
+
+1. Detect base branch (priority: input → GITHUB_BASE_REF → detection → "main")
+2. Search for worktrees other than base branch
+3. If exactly 1 found: Remove it, otherwise `status=skipped`
+
+Limitations:
+
+- Fails on job reruns
+- Skips with `reason=multiple` when multiple worktrees exist
+- Difficult to debug
+
+Acceptable use cases:
+
+- Simple single-worktree workflows
+- Testing and experimentation
+- Workflows that never rerun
+
+---
 
 ## How It Works
 
-1. **Get Worktree Path**:
-   - If `worktree-dir` is provided: Use it directly
-   - If not provided: Auto-detect worktree
-     - Detect base branch from `base-branch` input or current branch
-     - Find first worktree that is NOT the base branch
-2. **Check Directory Exists**: Verifies worktree directory exists
-   - If not found: Returns `warning` status (idempotent behavior)
-3. **Validate Worktree**: Confirms directory is a valid git worktree
-   - Checks for `.git` file (worktree marker)
-4. **Remove Worktree**: Executes `git worktree remove` with appropriate flags
-   - Uses `--force` flag if `force: true` (default)
-5. **Verify Removal**: Confirms directory was removed
-6. **Output Status**: Returns status (success, warning, or error)
+### Processing Flow
 
-## Status Meanings
+```bash
+1. Get base branch (auto-detection only)
+   ├─ Priority 1: inputs.base-branch
+   ├─ Priority 2: GITHUB_BASE_REF
+   ├─ Priority 3: git symbolic-ref (continues on failure)
+   └─ Fallback: "main"
 
-| Status    | Description                                      | Exit Code |
-| --------- | ------------------------------------------------ | --------- |
-| `success` | Worktree removed successfully                    | 0         |
-| `warning` | Worktree doesn't exist (already cleaned)         | 0         |
-| `error`   | Removal failed (e.g., not a worktree, git error) | 1         |
+2. Get worktree path
+   ├─ If inputs.worktree-dir provided: Use it
+   └─ Otherwise: Auto-detect
+      ├─ Search with git worktree list (exclude base branch)
+      ├─ 0 found → reason=no-worktrees, skipped
+      ├─ 1 found → Continue
+      └─ 2+ found → reason=multiple, skipped
 
-The action is designed to be idempotent - running it multiple times on the same worktree is safe. If the worktree is already removed, it returns a `warning` status but doesn't fail.
+3. Validation (3 layers)
+   ├─ Directory existence check
+   │  └─ Not exist → reason=already-removed, skipped
+   ├─ Git worktree registration check
+   │  └─ Not registered → reason=not-registered, error
+   ├─ .git marker check
+   │  └─ Missing → reason=missing-marker, error
+   ├─ Git work-tree validity check
+   │  └─ Invalid → reason=invalid-worktree, error
+   └─ Uncommitted changes check
+      ├─ Found + force=false → reason=uncommitted, error
+      └─ Found + force=true → Continue (reason=removed-dirty)
 
-## Error Handling
-
-### Worktree Already Removed
-
-**Behavior**: Returns `warning` status, doesn't fail
-
-```
-EXIT_STATUS=warning:Worktree directory does not exist (already cleaned)
-```
-
-This is normal and expected if cleanup runs multiple times or if the worktree was manually removed.
-
-### Directory Exists But Not a Worktree
-
-**Behavior**: Returns `error` status and fails
-
-```
-EXIT_STATUS=error:Directory is not a valid git worktree
+4. Execute removal
+   ├─ git worktree remove [--force]
+   ├─ Success → reason=removed or removed-dirty, success
+   └─ Failure → reason=removal-failed, error
 ```
 
-**Solution**: Ensure the path points to a directory created with `git worktree add`.
+### Step Details
 
-### Git Worktree Remove Failed
+| Step                | Responsibility                         | Conditional Execution                    |
+| ------------------- | -------------------------------------- | ---------------------------------------- |
+| `get-base-branch`   | Determine base branch                  | `inputs.worktree-dir == ''`              |
+| `get-worktree`      | Get or auto-detect worktree path       | Always                                   |
+| `validate-worktree` | 3-layer validation + uncommitted check | `get-worktree.outcome == 'success'`      |
+| `cleanup-worktree`  | Execute `git worktree remove`          | `validate-worktree.outcome == 'success'` |
+| `output-results`    | Display final results                  | `always()`                               |
 
-**Behavior**: Returns `error` status and fails
-
-**Common Causes**:
-
-- Worktree has uncommitted changes (when `force: false`)
-- Worktree is locked by another process
-- Permission issues
-
-**Solution**: Check git error message in logs, consider using `force: true`, or manually investigate.
+---
 
 ## Troubleshooting
 
-### Cleanup Always Shows Warning
+### Common Errors and Reason Codes
 
-**Cause**: Worktree directory doesn't exist when cleanup runs
+#### reason=already-removed (skipped)
 
-**Possible Reasons**:
+Situation: Directory doesn't exist
 
-- Cleanup is running multiple times
-- Worktree was never created successfully
-- Worktree was removed manually or by another step
+```bash
+status=skipped
+reason=already-removed
+```
 
-**Solution**: Check workflow logs to verify worktree creation succeeded. If using output from `pr-worktree-setup`, ensure the step ID matches.
+Causes:
 
-### Cleanup Fails with "Not a Valid Git Worktree"
+- Cleanup ran multiple times
+- Manually removed
+- Worktree creation failed
 
-**Cause**: The directory exists but wasn't created with `git worktree add`
+Solution: Normal behavior (idempotency). Check logs to verify worktree creation succeeded.
 
-**Solution**: Ensure you're passing the correct path from `pr-worktree-setup`. Don't pass arbitrary directories.
+#### reason=not-registered (error)
+
+Situation: Directory exists but not registered as git worktree
+
+```bash
+::error::Path is not a registered git worktree
+status=error
+reason=not-registered
+```
+
+Causes:
+
+- Directory not created with `git worktree add`
+- Wrong path specified
+- Worktree removed by other means, leaving remnants
+
+Solution: Check with `git worktree list`. Specify correct path.
+
+#### reason=uncommitted (error)
+
+Situation: Uncommitted changes with force=false
+
+```bash
+::error::Cannot remove worktree with uncommitted changes (force=false)
+::error::Changes found:
+M  file.txt
+status=error
+reason=uncommitted
+```
+
+Causes:
+
+- Work in progress not committed
+- Files not added to git
+
+Solution:
+
+1. Commit and push changes
+2. Or use `force: true` (results in `reason=removed-dirty`)
+
+#### reason=multiple (skipped)
+
+Situation: Multiple worktrees detected in auto-detection
+
+```bash
+::notice::Multiple worktrees found (3), skipping auto-detection
+status=skipped
+reason=multiple
+```
+
+Causes:
+
+- Multiple worktrees exist besides base branch
+- Auto-detection cannot decide
+
+Solution: Specify `worktree-dir` explicitly (recommended pattern).
+
+#### reason=invalid-worktree (error)
+
+Situation: Not a valid git working tree
+
+```bash
+::error::Path is not a valid git working tree
+status=error
+reason=invalid-worktree
+```
+
+Causes:
+
+- Worktree corruption
+- `.git` file content invalid
+
+Solution: Check with `git worktree list`. Use `git worktree prune` if needed.
+
+### Rerun Issues
+
+Problem: Cleanup fails on job rerun
+
+Cause: First run already removed worktree, auto-detection returns `reason=no-worktrees`
+
+Solution:
+
+```yaml
+- name: Cleanup worktree
+  if: always() && steps.init.outcome == 'success' # Only if init succeeded
+  uses: ./.github/actions/pr-worktree-cleanup
+  with:
+    worktree-dir: ${{ steps.init.outputs.worktree-path }} # Explicit path
+```
 
 ### Permission Denied
 
-**Cause**: Git or filesystem permission issues
+Problem: Git or filesystem permission errors
 
-**Solution**: Ensure the workflow has appropriate permissions and the worktree isn't locked by another process.
+Solution:
 
-## Design Decisions
+- Verify workflow has `contents: write` permission
+- Check worktree not locked by another process
+- Use runner temp directory (`${{ runner.temp }}`)
 
-<!-- textlint-disable ja-technical-writing/no-exclamation-question-mark -->
+---
 
-### Why Default force: true?
+## Design Philosophy
 
-The default `force: true` matches the common pattern of using `git worktree remove --force` in cleanup steps. This ensures cleanup succeeds even if uncommitted changes exist, which is typically desired in CI/CD environments where the worktree is temporary.
+### Why Strict Mode (force=false) as Default?
 
-For workflows where preserving uncommitted changes matters, explicitly set `force: false`.
+Reason: Safety first
 
-### Why Warning Instead of Error for Missing Worktree?
+- Prevent data loss: Protect uncommitted changes
+- Explicit intent: User must explicitly choose `force: true`
+- CI/CD alignment: Temporary worktrees should be clean
 
-Returning a `warning` status instead of `error` when the worktree doesn't exist makes the action idempotent. This is useful when:
+Usage:
 
-- Cleanup runs in `if: always()` blocks that may execute multiple times
-- Another step already removed the worktree
-- Worktree creation failed but cleanup still runs
+- force=false (default): Production workflows, data protection
+- force=true: CI/CD temporary environments, uncommitted changes acceptable
 
-This design prevents false-positive failures in CI/CD pipelines.
+### Why Unified Reason Field?
 
-### Why Validate It's a Git Worktree?
-
-The validation prevents accidentally running `git worktree remove` on arbitrary directories, which could cause unexpected behavior. By checking for the `.git` file (worktree marker), we ensure the action only operates on legitimate git worktrees.
-
-<!-- textlint-enable ja-technical-writing/no-exclamation-question-mark -->
-
-## Pairing with pr-worktree-setup
-
-This action is designed to pair with `pr-worktree-setup`:
+Previous design (complex):
 
 ```yaml
-# Initialize
+outputs:
+  removed: true/false
+  was-dirty: true/false
+  skip-reason: no-path/multiple/...
+  # error-reason didn't exist
+```
+
+Problems:
+
+- Must combine multiple fields
+- Error reasons unclear
+- Complex conditionals
+
+New design (simple):
+
+```yaml
+outputs:
+  reason: removed/removed-dirty/uncommitted/multiple/...
+  # Single field covers all 12 patterns
+```
+
+Benefits:
+
+1. Simple conditionals: `if: reason == 'removed-dirty'`
+2. Complete coverage: All success/skipped/error have reasons
+3. Self-documenting: Reason codes readable by humans and machines
+4. Extensible: New reasons don't break existing logic
+
+### Why Auto-detect is Fallback?
+
+Auto-detect problems:
+
+- Fails on job reruns (worktree already removed)
+- Cannot decide with multiple worktrees
+- Requires base branch checkout
+- Difficult to debug
+
+Design priorities:
+
+1. Reliability > Convenience
+2. Explicitness > Magic
+3. Rerun safety > Automation
+
+Recommendation: Always specify `worktree-dir` explicitly, passing initialization step output.
+
+### Fail-fast vs Idempotent (CLAUDE.md Compliant)
+
+This action follows [CLAUDE.md](../../../CLAUDE.md) fail-fast validation pattern.
+
+#### What is Fail-fast?
+
+Fail-fast (immediate failure): Strategy to immediately fail with `exit 1` when validation error detected.
+
+Purpose:
+
+- Early error detection
+- Prevent continuation in problematic state
+- Clear success/failure signals
+
+CLAUDE.md principles:
+
+```yaml
+# REQUIRED: Fail-Fast Validation
+if: steps.previous_step.outcome == 'success'
+
+# Validation errors fail immediately with exit 1
+if [ "$ERROR_CONDITION" ]; then
+  echo "::error::Validation failed: reason"
+  exit 1
+fi
+```
+
+#### This Action's Implementation
+
+| Scenario            | Behavior         | Exit Code | Reason                        |
+| ------------------- | ---------------- | --------- | ----------------------------- |
+| Validation error    | `status=error`   | 1         | Immediate failure (fail-fast) |
+| Idempotent scenario | `status=skipped` | 0         | OK (idempotent)               |
+| Successful removal  | `status=success` | 0         | Normal completion             |
+
+Important design decisions:
+
+- `status=error` + `exit 0` combination does not exist
+- Validation errors always `exit 1` (fail-fast)
+- Idempotent cases (already removed, etc.) `exit 0` (normal)
+
+Exception: "Already removed" is `reason=already-removed, status=skipped, exit 0` (ensures idempotency)
+
+---
+
+## References
+
+### Related Actions
+
+- [PR Worktree Setup](../pr-worktree-setup/README.md) - Use as pair for worktree creation
+- [Create PR from Worktree](../create-pr-from-worktree/README.md) - Commit and create PR in worktree
+
+### Pairing Example
+
+```yaml
+# Complete workflow example
 - name: Initialize worktree
-  id: init-worktree
+  id: init
   uses: ./.github/actions/pr-worktree-setup
   with:
     branch-name: feature/my-branch
     worktree-dir: ${{ runner.temp }}/worktree
 
-# ... do work ...
+- name: Do work
+  run: |
+    cd ${{ steps.init.outputs.worktree-path }}
+    # ... changes ...
 
-# Cleanup (always runs)
 - name: Cleanup worktree
-  if: always()
+  if: always() && steps.init.outcome == 'success'
   uses: ./.github/actions/pr-worktree-cleanup
   with:
-    worktree-dir: ${{ steps.init-worktree.outputs.worktree-path }}
+    worktree-dir: ${{ steps.init.outputs.worktree-path }}
 ```
 
-**Key Points**:
+### Security Considerations
 
-- Use `worktree-path` output from initialization (absolute path)
-- Always use `if: always()` to ensure cleanup runs
-- Place cleanup step at the end of the job
-
-## Security Considerations
-
-**Safe Defaults:**
+Safe defaults:
 
 - Only removes git worktrees (validates `.git` file exists)
 - Won't remove arbitrary directories
-- Fails gracefully with informative errors
+- Informative error messages ensure transparency
 
-**Force Flag:**
+Force flag:
 
-- `force: true` removes worktree even with uncommitted changes
-- `force: false` preserves uncommitted changes and fails if they exist
-- Choose based on your workflow requirements
+- `force: true`: Removes uncommitted changes (`reason=removed-dirty`)
+- `force: false`: Protects uncommitted changes (errors with `reason=uncommitted`)
+- Choose based on workflow requirements
 
-## License
+### License
 
 MIT License - See repository LICENSE file
 
-## References
+### Further Reading
 
 - [Git Worktree Documentation](https://git-scm.com/docs/git-worktree)
-- [PR Worktree Setup Action](../pr-worktree-setup/README.md)
 - [GitHub Actions Workflow Syntax](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions)
+- [CLAUDE.md - AI Collaboration Guide](../../../CLAUDE.md)
+
+---
+
+Last Updated: 2026-02-04
+Version: 2.0 (Unified Reason Field)
