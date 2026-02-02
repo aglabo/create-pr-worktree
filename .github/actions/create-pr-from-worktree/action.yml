@@ -43,7 +43,7 @@ outputs:
     description: "Pull request URL (empty if validation failed)"
     value: ${{ steps.create-pr.outputs.pr-url }}
   pr-operation:
-    description: "Operation performed (created, updated, or empty if validation failed)"
+    description: "Operation performed (created, updated, update-failed, or empty if validation failed)"
     value: ${{ steps.create-pr.outputs.operation }}
   automerge-status:
     description: "Auto-merge status (enabled, failed, timeout, or skipped if merge-method=never)"

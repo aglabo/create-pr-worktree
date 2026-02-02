@@ -1,462 +1,332 @@
 # Create PR from Worktree Action
 
 <!-- textlint-disable ja-technical-writing/sentence-length -->
-<!-- textlint-disable ja-technical-writing/max-comma -->
+<!-- textlint-disable ja-technical-writing/no-exclamation-question-mark -->
 <!-- markdownlint-disable line-length -->
 
-A reusable composite action that creates or updates Pull Requests from
-worktree with labels and auto-merge enabled.
+## Overview
 
-**🤖 Designed for automated Bot workflows** - This action automatically
-enables auto-merge. Ensure your organization's policies permit
-auto-merge for Bot-generated PRs before use.
+A set of 3 composite actions for safely creating PRs on worktrees.
+
+### TL;DR (5-line summary)
+
+- What it does: Create PR branches in isolated worktree environments, keeping main clean
+- 3-action set: setup (create worktree) → create-pr (this action) → cleanup (remove worktree)
+- Requirements: Linux runner, execute all 3 in same job, pr-worktree-setup prerequisite
+- Guarantees: Sigstore signing, base branch auto-detection, fail-safe (safe-on-failure) design, reliable cleanup
+- Does NOT guarantee: Full safety without worktree strategy, worktree sharing across jobs
+
+### 3 Action Roles
+
+```bash
+1. pr-worktree-setup        → Create worktree + configure Sigstore signing
+2. create-pr-from-worktree  → Create/update PR (this action)
+3. pr-worktree-cleanup      → Remove worktree (if: always())
+```
+
+### Why Use Worktree Strategy
+
+- Protect main branch: PR work doesn't affect main
+- Verifiable signatures: Keyless signing with Sigstore gitsign
+- Parallel execution safety: Multiple PRs don't interfere
+- Clean environment: Reliable cleanup after work
+
+---
+
+## Quick Start
+
+```yaml
+name: Auto PR with Worktree
+on: push
+
+permissions:
+  id-token: write # Sigstore signing
+  contents: write # Git operations + label creation
+  pull-requests: write # PR operations
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. Setup worktree
+      - name: Setup PR worktree
+        id: setup
+        uses: ./.github/actions/pr-worktree-setup
+        with:
+          branch-name: auto-fix/${{ github.ref_name }}
+          worktree-dir: ${{ runner.temp }}/pr-worktree
+
+      # 2. Work in worktree
+      - name: Make changes in worktree
+        working-directory: ${{ steps.setup.outputs.worktree-path }}
+        run: |
+          echo "fix" > fix.txt
+          git add fix.txt
+          git commit -m "fix: Apply auto-fix"
+          git push origin auto-fix/${{ github.ref_name }}
+
+      # 3. Return to main (IMPORTANT!)
+      - name: Return to main
+        run: git checkout ${{ github.ref_name }}
+
+      # 4. Create PR (this action)
+      - name: Create PR
+        uses: ./.github/actions/create-pr-from-worktree
+        with:
+          pr-branch: auto-fix/${{ github.ref_name }}
+          pr-title: "fix: Apply auto-fix"
+          pr-body: "Auto-generated PR"
+          labels: "automated,fix"
+          merge-method: "squash"
+
+      # 5. Cleanup (always run)
+      - name: Cleanup worktree
+        if: always() && steps.setup.outcome == 'success'
+        uses: ./.github/actions/pr-worktree-cleanup
+        with:
+          worktree-dir: ${{ steps.setup.outputs.worktree-path }}
+```
+
+**Key Points**:
+
+1. Execute 3 actions in order (setup → create-pr → cleanup)
+2. Return to main after working in worktree
+3. Guarantee cleanup with `if: always()`
+
+---
 
 ## Prerequisites
 
-Before calling this action, ensure:
+### Worktree Strategy Requirements
 
-1. **You must be on the base branch** - The currently checked-out branch becomes the base branch for the PR (auto-detected)
-2. The PR branch (head branch) exists on the remote repository
-3. Changes are committed to the PR branch
-4. The PR branch is pushed to origin
-5. You are not in detached HEAD state
+| Requirement             | Description                                                        |
+| ----------------------- | ------------------------------------------------------------------ |
+| `pr-worktree-setup` run | Worktree must be created                                           |
+| PR branch pushed        | Commit and push completed in worktree                              |
+| Main branch checked out | Return to main before running `create-pr-from-worktree`            |
+| Linux runner            | ubuntu-latest / ubuntu-22.04 / ubuntu-20.04                        |
+| Same job execution      | All 3 actions in same job (worktrees cannot be shared across jobs) |
 
-This action focuses solely on GitHub PR operations - it does not perform
-git operations like branch creation, commits, or pushes. The base branch is automatically
-detected from the currently checked-out branch, and you specify only the PR branch (head branch) as input.
-
-## Features
-
-- Automatic Branch Detection: Auto-detects current branch as PR head - no manual branch name configuration needed
-- PR Creation/Update: Creates new PRs or updates existing ones with
-  title and body changes
-- Flexible Labeling: Auto-creates labels if they don't exist and
-  applies them to PRs
-- Auto-Merge Support: Enables auto-merge with configurable merge
-  methods (merge, squash, rebase)
-- Branch Validation: Verifies branches exist on remote before creating PR
-- Idempotent: Safe to run multiple times - updates existing PRs
-  instead of failing
-- Native GitHub CLI: Uses `gh` CLI for maximum flexibility and reliability
-
-## Usage
-
-### Basic Example
+### Required Permissions
 
 ```yaml
-# Create and push PR branch first (while on base branch)
-- name: Create PR branch
-  run: |
-    # Currently on base branch (e.g., main)
-    git checkout -b auto-fix/${{ github.ref_name }}
-    git commit -m "fix: Auto-fix issues"
-    git push origin auto-fix/${{ github.ref_name }}
-
-# Return to base branch before creating PR
-- name: Return to base branch
-  run: git checkout ${{ github.ref_name }}
-
-# Create the PR (base branch auto-detected from current branch)
-- name: Create Pull Request
-  uses: ./.github/actions/create-pr-from-worktree
-  with:
-    pr-branch: auto-fix/${{ github.ref_name }}
-    pr-title: "fix: Auto-fix issues"
-    pr-body: "This PR automatically fixes detected issues."
-    labels: "automated,fix"
-    merge-method: "squash"
+permissions:
+  id-token: write # Required for Sigstore signing in pr-worktree-setup
+  contents: write # Required for PR operations + label creation
+  pull-requests: write # Required for PR operations
 ```
 
-### Example with Manual Merge (No Auto-Merge)
+> Note:
+> With only `contents: write`, label creation may fail but PR creation will succeed (best-effort).
 
-```yaml
-# Create PR without auto-merge for manual review
-- name: Create PR branch
-  run: |
-    # Currently on base branch
-    git checkout -b feature/${{ github.ref_name }}
-    git commit -m "feat: Add new feature"
-    git push origin feature/${{ github.ref_name }}
+### Required Tools
 
-# Return to base branch
-- name: Return to base branch
-  run: git checkout ${{ github.ref_name }}
+- GitHub CLI (`gh`) version 2.0+
+- jq (JSON processor)
 
-- name: Create Pull Request (manual merge required)
-  uses: ./.github/actions/create-pr-from-worktree
-  with:
-    pr-branch: feature/${{ github.ref_name }}
-    pr-title: "feat: Add new feature"
-    pr-body: "This PR requires manual review and approval."
-    labels: "feature,needs-review"
-    merge-method: "never" # Disable auto-merge
-```
+※ Pre-installed on GitHub-hosted runners by default.
 
-### Advanced Example
-
-````yaml
-# Handle git operations
-- name: Create and push PR branch
-  run: |
-    PR_BRANCH="auto-chmod/${{ github.ref_name }}"
-
-    # Create or update branch
-    if git ls-remote --heads origin "$PR_BRANCH" | grep -q "$PR_BRANCH"; then
-      git fetch origin "$PR_BRANCH"
-      git checkout -B "$PR_BRANCH" "origin/$PR_BRANCH"
-    else
-      git checkout -b "$PR_BRANCH"
-    fi
-
-    # Commit and push
-    git config --local user.name "github-actions[bot]"
-    git config --local user.email "github-actions[bot]@users.noreply.github.com"
-    git commit -m "[Bot] ci(scripts): Fix shell script permissions"
-    git push -f origin "$PR_BRANCH"
-
-# Return to base branch before creating PR
-- name: Return to base branch
-  run: git checkout ${{ github.ref_name }}
-
-# Create PR (base branch auto-detected from current branch)
-- name: Create PR with auto-merge
-  id: create_pr
-  uses: ./.github/actions/create-pr-from-worktree
-  with:
-    pr-branch: auto-chmod/${{ github.ref_name }}
-    pr-title: "[Bot] ci(scripts): Fix shell script permissions"
-    pr-body: |
-      ## Auto-generated PR: Shell Script Permission Fix
-
-      This PR automatically fixes executable permissions...
-
-      ### Files Modified
-      ```
-      ${{ steps.chmod.outputs.changed_files }}
-      ```
-
-      🤖 Auto-generated by GitHub Actions
-    labels: "automated,chore"
-    merge-method: "squash"
-
-- name: Check validation result and use outputs
-  run: |
-    STATUS="${{ steps.create_pr.outputs.validation-status }}"
-    MESSAGE="${{ steps.create_pr.outputs.validation-message }}"
-
-    if [ "$STATUS" = "fail" ] || [ "$STATUS" = "error" ]; then
-      echo "::error::PR creation skipped: $MESSAGE"
-      exit 1
-    fi
-
-    if [ "$STATUS" = "warning" ]; then
-      echo "::warning::PR created with warnings: $MESSAGE"
-    fi
-
-    echo "PR Number: ${{ steps.create_pr.outputs.pr-number }}"
-    echo "PR URL: ${{ steps.create_pr.outputs.pr-url }}"
-    echo "Operation: ${{ steps.create_pr.outputs.pr-operation }}"
-````
-
-### Validation Handling Example
-
-The action follows a **fail-first design** and **does not fail the workflow** even if
-validation fails. Instead, it sets the `validation-status` and `validation-message`
-outputs, allowing you to handle errors gracefully. PR creation only proceeds when all
-validations return `ok`:
-
-```yaml
-# Must be on base branch (e.g., main) before calling this action
-- name: Checkout base branch
-  run: git checkout main
-
-- name: Create PR
-  id: create_pr
-  uses: ./.github/actions/create-pr-from-worktree
-  with:
-    pr-branch: feature/my-feature
-    pr-title: "New feature"
-    pr-body: "Description"
-
-# Option 1: Fail the job if validation failed
-- name: Check validation
-  if: steps.create_pr.outputs.validation-status != 'ok'
-  run: |
-    echo "::error::Validation failed: ${{ steps.create_pr.outputs.validation-message }}"
-    exit 1
-
-# Option 2: Skip subsequent steps if validation failed
-- name: Post-PR tasks
-  if: steps.create_pr.outputs.validation-status == 'ok'
-  run: echo "PR created successfully"
-
-# Option 3: Handle different validation statuses
-- name: Handle validation result
-  run: |
-    STATUS="${{ steps.create_pr.outputs.validation-status }}"
-    MESSAGE="${{ steps.create_pr.outputs.validation-message }}"
-
-    case "$STATUS" in
-      ok)
-        echo "✓ Validation passed and PR created"
-        ;;
-      warning)
-        echo "::warning::Validation warning (PR not created): $MESSAGE"
-        ;;
-      fail)
-        echo "::error::Validation failed (PR not created): $MESSAGE"
-        exit 1
-        ;;
-      error)
-        echo "::error::System error (PR not created): $MESSAGE"
-        exit 1
-        ;;
-    esac
-```
+---
 
 ## Inputs
 
-| Input          | Description                                                                               | Required | Default      |
-| -------------- | ----------------------------------------------------------------------------------------- | -------- | ------------ |
-| `pr-branch`    | PR branch name (head branch for the pull request)                                         | Yes      | -            |
-| `pr-title`     | Pull request title                                                                        | Yes      | -            |
-| `pr-body`      | Pull request body/description                                                             | Yes      | -            |
-| `labels`       | Comma-separated labels to add                                                             | No       | `''` (empty) |
-| `merge-method` | Auto-merge method (`merge`/`squash`/`rebase`/`never`). Use `never` to disable auto-merge. | No       | `squash`     |
+| Input          | Required | Default  | Description                                           |
+| -------------- | -------- | -------- | ----------------------------------------------------- |
+| `pr-branch`    | Yes      | -        | PR branch name (head branch)                          |
+| `pr-title`     | Yes      | -        | Pull request title                                    |
+| `pr-body`      | Yes      | -        | Pull request body/description                         |
+| `labels`       | No       | `''`     | Comma-separated labels (e.g., `"automated,fix"`)      |
+| `merge-method` | No       | `squash` | Auto-merge method (`merge`/`squash`/`rebase`/`never`) |
+
+**Input Validation**: `merge-method` is whitelist-validated. Typos result in immediate errors.
+
+---
 
 ## Outputs
 
 | Output               | Description                                                           |
 | -------------------- | --------------------------------------------------------------------- |
 | `validation-status`  | Validation result (`ok`, `fail`, `error`, `warning`)                  |
-| `validation-message` | Validation status message (provides details about validation results) |
-| `pr-number`          | Created/updated PR number                                             |
-| `pr-url`             | Pull request URL                                                      |
-| `pr-operation`       | Operation performed (`created`, `updated`, `none`)                    |
+| `validation-message` | Validation status message                                             |
+| `pr-number`          | Created/updated PR number (empty on validation failure)               |
+| `pr-url`             | Pull request URL (empty on validation failure)                        |
+| `pr-operation`       | Operation performed (`created`, `updated`, `update-failed`, or empty) |
+| `automerge-status`   | Auto-merge status (`enabled`, `failed`, `timeout`, or empty)          |
 
-**Validation Status Values**:
+※ Recommended: Use `validation-status == 'ok'` for success determination.
 
-- `ok`: All validations passed successfully
-- `fail`: User-fixable validation failure (missing branches, invalid parameters)
-- `error`: System/runtime error (API failures, authentication failures)
-- `warning`: Validation passed with warnings (e.g., low API rate limit)
+**Validation Status**:
 
-**Note**: This action follows a **fail-first design**. PR creation only proceeds when
-all validation steps return `ok` status. If any validation returns `fail`, `error`, or
-`warning`, the PR creation steps are skipped, and `pr-number`, `pr-url`, and
-`pr-operation` will be empty. This ensures PRs are only created in fully validated
-environments.
+- `ok`: All successful
+- `fail`: User-correctable (e.g., branch not found)
+- `error`: System error (e.g., API failure)
+- `warning`: PR created/updated successfully, but additional operations (labels / auto-merge) failed
 
-## Branch Requirements and Detection
+**Operation Values**:
 
-The action requires both base and PR branches to already exist on the remote repository.
+- `created`: New PR created
+- `updated`: Existing PR updated successfully
+- `update-failed`: PR exists but update failed (PR number and URL still returned)
+- Empty: Validation failed
 
-**Base Branch Auto-Detection**:
-
-- The **currently checked-out branch** becomes the base branch (auto-detected using `git symbolic-ref --short HEAD`)
-- You must checkout the base branch **before** calling this action
-- Only the `pr-branch` (head branch) needs to be specified as input
-
-**Validation**:
-
-1. Base branch is auto-detected from current branch
-2. Validates:
-   - Base branch exists on remote
-   - PR branch exists on remote
-   - Base and PR branches are different
-
-**Example branch configurations**:
-
-- Checked out on `main` + `pr-branch: auto-fix/main` → creates PR from `auto-fix/main` → `main`
-- Checked out on `feat/new-feature` + `pr-branch: auto-chmod/feat/new-feature` → creates PR from `auto-chmod/feat/new-feature` → `feat/new-feature`
-
-**Important**: You must be on a checked-out branch. Detached HEAD state will cause the action to fail with "Failed to detect current branch name" error.
-
-## Label Management
-
-Labels specified in the `labels` input are:
-
-1. Created automatically if they don't exist (using `gh label create --force`)
-2. Applied to the PR
-3. Comma-separated (e.g., `"automated,chore,fix"`)
-
-**Note**: Labels are created with default colors. To customize label
-colors, create them manually in the repository settings first.
-
-## Auto-Merge Behavior
-
-The action can enable auto-merge with the specified method:
-
-- `squash` (default): Squash commits into one
-- `merge`: Standard merge commit
-- `rebase`: Rebase and merge
-- `never`: Disable auto-merge (PR created without auto-merge enabled)
-
-**When auto-merge is enabled** (`squash`/`merge`/`rebase`):
-
-- Repository must have auto-merge enabled in settings
-- Branch protection rules must be satisfied
-- Required status checks must pass
-- Required approvals must be received
-- The PR will automatically merge once all conditions are met
-
-**When auto-merge is disabled** (`never`):
-
-- PR is created or updated normally
-- Labels are applied if specified
-- Auto-merge is NOT enabled
-- Manual merge or approval required
-
-**⚠️ Organization Policy Warning**:
-
-This action is designed for **automated Bot workflows only**. Some
-organizations have policies prohibiting auto-merge. Before using this
-action:
-
-- Verify your organization allows auto-merge for Bot PRs
-- Check if specific merge methods (squash/merge/rebase) are restricted
-- Ensure compliance with your team's code review policies
-- Consider using `merge-method: "squash"` as the safest default
-
-## Requirements
-
-### Repository Settings
-
-1. **Auto-merge enabled**: Settings → General → Allow auto-merge
-2. **Branch protection** (recommended): Protect base branches with
-   required checks
-
-### Workflow Permissions
-
-The workflow must have `contents: write` permission:
+**Usage Example**:
 
 ```yaml
-permissions:
-  contents: write
-  pull-requests: write # Usually included in contents: write
+- name: Notify on PR creation
+  if: steps.create-pr.outputs.pr-number != ''
+  run: echo "PR created: ${{ steps.create-pr.outputs.pr-url }}"
 ```
 
-### Authentication
+---
 
-The action automatically uses the workflow's `GITHUB_TOKEN` for all GitHub CLI operations. No explicit token configuration is required.
+## Core Concepts
 
-**For advanced scenarios requiring PAT tokens**, set the `GH_TOKEN` environment variable at the workflow level:
+### Worktree Strategy Architecture
 
-```yaml
-env:
-  GH_TOKEN: ${{ secrets.PAT_TOKEN }}
-
-steps:
-  - uses: ./.github/actions/create-pr-from-worktree
-    # Will inherit GH_TOKEN from workflow env
+```text
+┌─────────────────────────────────────────────┐
+│ Main Repository (main - always clean)       │
+└─────────────────────────────────────────────┘
+              ↓ pr-worktree-setup
+┌─────────────────────────────────────────────┐
+│ Worktree (isolated environment)             │
+│ - Checked out to PR branch                  │
+│ - Sigstore gitsign configured               │
+│ - Work: git commit → git push               │
+└─────────────────────────────────────────────┘
+              ↓ git checkout main (IMPORTANT!)
+┌─────────────────────────────────────────────┐
+│ Main Repository (returned to main)          │
+│ - Run create-pr-from-worktree               │
+│ - Auto-detect base branch (main)            │
+└─────────────────────────────────────────────┘
+              ↓ pr-worktree-cleanup
+┌─────────────────────────────────────────────┐
+│ Cleanup complete - Worktree removed, main clean │
+└─────────────────────────────────────────────┘
 ```
 
-## How It Works
+### Base Branch Auto-Detection
 
-1. **Detect Base Branch**: Auto-detects current branch as base branch using `git symbolic-ref --short HEAD` (fails if in detached HEAD state)
-2. **Validate Environment**: Verifies OS, GitHub CLI, and API rate limits (fail-first: must be `ok`)
-3. **Validate Branches**: Verifies base and PR branches exist on remote and are different (fail-first: must be `ok`)
-4. **Create/Update PR**: Creates new PR or updates existing one with title and body (only if all validations are `ok`)
-5. **Apply Labels**: Creates labels if needed and applies them (only if all validations are `ok`)
-6. **Enable Auto-Merge**: Configures auto-merge with specified method (only if `merge-method` is not `never`)
+- Auto-detects currently checked-out branch as base
+- Retrieved via `git symbolic-ref --short HEAD`
+- **Must return to main after working in worktree**
 
-## Limitations
+※ This action treats the "currently checked-out branch" as the base branch, so it cannot detect the correct base while in a worktree.
 
-- Requires pre-pushed branches: Both base and current branches must
-  already exist on remote
-- Requires checked-out branch: Cannot run in detached HEAD state
-- No git operations: The action does not create branches, commit
-  changes, or push code
-- Single PR per branch pair: One PR from current branch to
-  base branch at a time
-- Linux only: The action runs on Linux runners only
+※ No input option to specify base branch is provided. This design responsibility belongs to the caller workflow.
+
+### Fail-Open Strategy
+
+When PR existence check (`gh pr list`) fails:
+
+1. Treat failure as "PR does not exist"
+2. Attempt to create new PR
+3. GitHub API rejects duplicate PRs (safety net)
+
+**Reason**: Prioritize availability. Temporary API failures should not prevent PR creation.
+
+※ Final rejection of duplicate PRs is guaranteed by the GitHub API. This action prioritizes availability and does not abort PR creation attempts.
+
+This action does not relax consistency guarantees; PR uniqueness is enforced by the GitHub API.
+
+### Validation Architecture
+
+```text
+1. Base Branch Detection → 2. API Rate Limit Check
+  → 3. Branch Validation → 4. PR Creation/Update
+  → 5. ABI Contract Validation → 6. Labels (best-effort)
+  → 7. Auto-Merge (merge-method != 'never')
+```
+
+**Fail-First Design**: Does not proceed to PR creation until all validations reach `ok` / `success`.
+
+---
+
+## Label & Auto-Merge
+
+### Labels (Best-Effort)
+
+- Label creation/application is **non-blocking**
+- Continues with warning on failure, PR creation succeeds
+- Requires `contents: write` permission
+
+### Auto-Merge
+
+- `squash` (default) / `merge` / `rebase` / `never`
+- Auto-merge must be enabled in repository
+- PR creation succeeds even on failure (`automerge-status=failed`)
+
+---
 
 ## Troubleshooting
 
-### "Failed to detect current branch name"
+### Worktree-Related
 
-This error occurs when running in detached HEAD state. You must be on the **base branch** when calling this action:
+**"Failed to detect current branch name"**
+→ Forgot to return to main. Run `git checkout main` before execution.
 
-```yaml
-# Bad: Detached HEAD state
-- run: git checkout HEAD~1
+**"Branch does not exist on remote"**
+→ Forgot to `git push` in worktree. Push before creating PR.
 
-# Bad: On PR branch instead of base branch
-- run: git checkout my-pr-branch
+**Worktree cleanup not running**
+→ Add `if: always() && steps.setup.outcome == 'success'`.
 
-# Good: On base branch
-- run: git checkout main
-- uses: ./.github/actions/create-pr-from-worktree
-  with:
-    pr-branch: my-pr-branch
-```
+### Common Issues
 
-**Correct workflow pattern**:
+**Auto-merge not working**
+→ Check repository settings, branch protection, status checks, and approvals.
 
-```yaml
-# 1. Create and push PR branch
-- name: Create PR branch
-  run: |
-    git checkout -b my-pr-branch
-    git commit -m "My changes"
-    git push origin my-pr-branch
+**Labels not created**
+→ Verify `contents: write` permission.
 
-# 2. Return to base branch
-- name: Return to base branch
-  run: git checkout main
+**Timeout detection failed**
+→ Use Linux runner (macOS/Windows not supported).
 
-# 3. Create PR (base branch auto-detected as main)
-- name: Create PR
-  uses: ./.github/actions/create-pr-from-worktree
-  with:
-    pr-branch: my-pr-branch
-    pr-title: "My PR"
-    pr-body: "Description"
-```
+---
 
-### "Branch does not exist on remote"
+## FAQ
 
-Ensure the PR branch is pushed before calling this action, and that you're on the base branch:
+### Why are there 3 separate actions?
 
-```yaml
-- name: Create and push PR branch
-  run: |
-    git checkout -b my-pr-branch
-    git commit -m "My changes"
-    git push origin my-pr-branch
+For separation of concerns and reusability. Each action can be independently verified and tested.
 
-- name: Return to base branch
-  run: git checkout main
+### Can I use it without worktree?
 
-- name: Create PR
-  uses: ./.github/actions/create-pr-from-worktree
-  with:
-    pr-branch: my-pr-branch
-    pr-title: "My PR"
-    pr-body: "Description"
-```
+Technically possible, but risks polluting the main branch and Sigstore signing is unavailable. Strongly recommend using the worktree strategy.
 
-### Auto-merge not working
+### Why not support macOS/Windows?
 
-Check:
+Depends on GNU `timeout` exit code 124 contract. BSD timeout (macOS) has different exit codes, and Windows lacks a timeout command.
 
-1. Repository has auto-merge enabled
-2. Branch protection rules are satisfied
-3. Required status checks are passing
-4. Required approvals are received
+---
 
-### Labels not created
+## Reference
 
-The action creates labels with `--force` flag. If this fails:
+### Related Actions
 
-1. Check workflow token has sufficient permissions (`pull-requests: write`)
-2. Verify repository settings allow label creation
+- [pr-worktree-setup](../pr-worktree-setup/README.md) - Create worktree and configure Sigstore signing
+- [pr-worktree-cleanup](../pr-worktree-cleanup/README.md) - Safely remove worktree
 
-## Related Documentation
+### Documentation
 
 - [GitHub CLI Manual](https://cli.github.com/manual/)
-- [GitHub Auto-Merge Documentation](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/automatically-merging-a-pull-request)
-- [Composite Actions Guide](https://docs.github.com/en/actions/creating-actions/creating-a-composite-action)
+- [GitHub Auto-Merge](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/automatically-merging-a-pull-request)
+- [Composite Actions](https://docs.github.com/en/actions/creating-actions/creating-a-composite-action)
+- [Git Worktree](https://git-scm.com/docs/git-worktree)
+- [Sigstore Gitsign](https://github.com/sigstore/gitsign)
+
+### Limitations
+
+- Worktree strategy required (3-action set)
+- Linux runners only (GNU coreutils timeout required)
+- Same job execution (worktrees cannot be shared across jobs)
+- Pre-pushed branches required
+- Main branch checkout required
+
+---
 
 ## License
 

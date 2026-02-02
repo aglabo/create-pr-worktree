@@ -55,6 +55,21 @@
 #   - caller workflows can check outputs.status for finer control
 #   - future versions may introduce exit code 2 for warnings
 #
+# @note Reset time handling:
+#   If reset_time is "unknown" (due to date parsing failure or missing field),
+#   validation still proceeds based solely on the remaining count.
+#
+#   Rationale:
+#   - Remaining count is the authoritative source for rate limit status
+#   - Reset time is informational only (for user guidance)
+#   - Failing on unknown reset time would be overly strict
+#
+#   Caller workflows may treat unknown reset time as a special case by
+#   checking outputs.message for "reset time is unavailable".
+#
+#   Future versions (v4+) may introduce exit code 2 for warnings with
+#   unknown reset time to allow finer-grained control.
+#
 # @author atsushifx
 # @version 3.3.0
 # @license MIT
@@ -172,6 +187,10 @@ format_reset_time() {
 #   This is a pure function that implements the business logic for rate limit
 #   validation. It returns the status string via stdout without any side effects.
 #
+#   NOTE: This function relies ONLY on the remaining count, not on reset time.
+#   Even if reset_time is "unknown", the status is determined by remaining count.
+#   This is intentional - remaining count is authoritative, reset time is advisory.
+#
 # @arg $1 integer Remaining API calls
 #
 # @stdout Status string: "ok" | "warning" | "error"
@@ -278,6 +297,11 @@ handle_parse_error() {
 #   This function generates and outputs status-specific messages and GitHub
 #   Actions annotations based on the validation status.
 #
+#   NOTE: When reset_date is "unknown", the function outputs a specific message
+#   ("Rate limit reset time is unavailable") to inform the user, but validation
+#   still proceeds based on remaining count. Caller workflows may check
+#   outputs.message for "reset time is unavailable" and treat it specially.
+#
 # @arg $1 string Status (ok|warning|error)
 # @arg $2 integer Remaining API calls
 # @arg $3 integer Total API calls
@@ -301,6 +325,8 @@ output_rate_limit_status() {
       if [ "$reset_date" != "unknown" ]; then
         echo "::error::Rate limit resets at: $reset_date"
       else
+        # NOTE: Validation proceeds even with unknown reset time.
+        # Remaining count is authoritative; reset time is advisory only.
         echo "::error::Rate limit reset time is unavailable"
       fi
       ;;
@@ -310,6 +336,8 @@ output_rate_limit_status() {
       if [ "$reset_date" != "unknown" ]; then
         echo "::warning::Rate limit resets at: $reset_date"
       else
+        # NOTE: Validation proceeds even with unknown reset time.
+        # Remaining count is authoritative; reset time is advisory only.
         echo "::warning::Rate limit reset time is unavailable"
       fi
       ;;
