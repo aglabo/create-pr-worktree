@@ -62,7 +62,8 @@ echo "URL: ${BINARY_URL}"
 
 if ! curl -fsSL -o "${TEMP_DIR}/gitsign" "${BINARY_URL}"; then
   echo "::error::Failed to download gitsign binary from ${BINARY_URL}"
-  exit 1
+  echo "EXIT_STATUS=error:Failed to download gitsign binary from ${BINARY_URL}"
+  exit 0
 fi
 echo "✓ Binary downloaded"
 echo ""
@@ -74,7 +75,8 @@ echo "URL: ${CHECKSUM_URL}"
 
 if ! curl -fsSL -o "${TEMP_DIR}/checksums.txt" "${CHECKSUM_URL}"; then
   echo "::error::Failed to download checksums from ${CHECKSUM_URL}"
-  exit 1
+  echo "EXIT_STATUS=error:Failed to download checksums from ${CHECKSUM_URL}"
+  exit 0
 fi
 echo "✓ Checksums downloaded"
 echo ""
@@ -88,7 +90,8 @@ EXPECTED_CHECKSUM=$(awk -v binary="${BINARY_NAME}" '$2 == binary {print $1; exit
 
 if [ -z "${EXPECTED_CHECKSUM}" ]; then
   echo "::error::Could not find checksum for ${BINARY_NAME} in checksums.txt"
-  exit 1
+  echo "EXIT_STATUS=error:Could not find checksum for ${BINARY_NAME} in checksums.txt"
+  exit 0
 fi
 
 # Calculate actual checksum
@@ -98,7 +101,8 @@ if [ "${EXPECTED_CHECKSUM}" != "${ACTUAL_CHECKSUM}" ]; then
   echo "::error::Checksum verification failed!"
   echo "::error::Expected: ${EXPECTED_CHECKSUM}"
   echo "::error::Actual:   ${ACTUAL_CHECKSUM}"
-  exit 1
+  echo "EXIT_STATUS=error:Checksum verification failed"
+  exit 0
 fi
 
 echo "✓ Checksum verified: ${EXPECTED_CHECKSUM}"
@@ -108,7 +112,8 @@ echo ""
 echo "Installing gitsign to ${INSTALL_DIR}..."
 if ! install -m 755 gitsign "${INSTALL_DIR}/gitsign"; then
   echo "::error::Failed to install gitsign to ${INSTALL_DIR}"
-  exit 1
+  echo "EXIT_STATUS=error:Failed to install gitsign to ${INSTALL_DIR}"
+  exit 0
 fi
 echo "✓ Binary installed"
 echo ""
@@ -124,8 +129,14 @@ echo ""
 echo "Verifying installation..."
 if ! "${INSTALL_DIR}/gitsign" version > /dev/null 2>&1; then
   echo "::error::gitsign installation verification failed"
-  exit 1
+  echo "EXIT_STATUS=error:gitsign installation verification failed"
+  exit 0
 fi
 
 echo "=== gitsign installation complete ==="
+
+# Output installation results in parseable format
+GITSIGN_FULL_PATH="${INSTALL_DIR}/gitsign"
+echo "EXIT_STATUS=ok:gitsign installed successfully"
+echo "GITSIGN_PATH=${GITSIGN_FULL_PATH}"
 exit 0
