@@ -11,33 +11,37 @@
 # @brief Validate gitsign installation and GitHub Actions OIDC environment
 # @description
 #   Validates the environment for gitsign keyless signing:
-#   - gitsign binary is installed and accessible
+#   - gitsign-path output contract (binary path is set and valid)
+#   - gitsign binary exists at the specified path
 #   - gitsign binary is executable
 #   - OIDC environment variables are available
 #   - gitsign version command works
+#
+#   **Required Arguments:**
+#   - $1: gitsign-path (absolute path to gitsign binary from install-gitsign step)
 #
 #   **Required Environment Variables:**
 #   - ACTIONS_ID_TOKEN_REQUEST_TOKEN: GitHub Actions OIDC token request token
 #   - ACTIONS_ID_TOKEN_REQUEST_URL: GitHub Actions OIDC token request URL
 #
 #   **Checks:**
-#   1. gitsign command is in PATH
-#   2. gitsign binary is executable
-#   3. OIDC environment variables are set
-#   4. gitsign version command succeeds
+#   1. gitsign-path output is not empty (contract validation)
+#   2. gitsign binary exists at the specified path
+#   3. gitsign binary is executable
+#   4. OIDC environment variables are set
+#   5. gitsign version command succeeds
 #
 # @example
-#   ./validate-gitsign.sh
+#   ./validate-gitsign.sh "/path/to/gitsign"
 #
-# @exitcode 0 Always exits with 0 (validation result is output to stdout)
+# @exitcode 1 Validation failed (fail-fast pattern)
+# @exitcode 0 Validation succeeded
 #
-# @output EXIT_STATUS=<status>:<message>
-#   - ok: All validations passed
-#   - error: Validation failed (see message for details)
-#   - warning: Validation passed with warnings
+# @output status=success|error to $GITHUB_OUTPUT
+# @output message=<details> to $GITHUB_OUTPUT
 #
 # @author   atsushifx
-# @version  1.0.0
+# @version  2.0.0
 # @license  MIT
 
 set -uo pipefail
@@ -53,37 +57,52 @@ echo "=== Gitsign Environment Validation ==="
 echo ""
 
 # ============================================================================
-# Gitsign Binary Installation Check
+# Argument Validation (Output Contract Check)
 # ============================================================================
-echo "Checking gitsign installation..."
+GITSIGN_PATH="${1:-}"
 
-if ! command -v gitsign &> /dev/null; then
-  echo "::error::gitsign is not installed or not in PATH"
-  echo "::error::Please ensure gitsign binary is installed and accessible"
-  VALIDATION_FAILED=1
-  FAILURE_MESSAGE="gitsign is not installed or not in PATH"
-else
-  echo "✓ gitsign is installed"
-  GITSIGN_PATH=$(command -v gitsign)
-  echo "  Location: ${GITSIGN_PATH}"
+echo "Validating gitsign-path output contract..."
+
+if [ -z "${GITSIGN_PATH}" ]; then
+  echo "::error::Contract violation: gitsign-path output is empty"
+  echo "::error::This indicates a bug in install-gitsign.sh script"
+  echo "status=error" >> $GITHUB_OUTPUT
+  echo "message=Contract violation: gitsign-path output is empty" >> $GITHUB_OUTPUT
+  exit 1
 fi
+
+echo "✓ gitsign-path output is set: ${GITSIGN_PATH}"
+echo ""
+
+# ============================================================================
+# Gitsign Binary Existence Check
+# ============================================================================
+echo "Checking gitsign binary existence..."
+
+if [ ! -f "${GITSIGN_PATH}" ]; then
+  echo "::error::Contract violation: gitsign binary not found at: ${GITSIGN_PATH}"
+  echo "::error::This indicates install-gitsign.sh reported incorrect path"
+  echo "status=error" >> $GITHUB_OUTPUT
+  echo "message=Contract violation: gitsign binary not found at ${GITSIGN_PATH}" >> $GITHUB_OUTPUT
+  exit 1
+fi
+
+echo "✓ gitsign binary exists at: ${GITSIGN_PATH}"
 echo ""
 
 # ============================================================================
 # Gitsign Executable Check
 # ============================================================================
-if [ "$VALIDATION_FAILED" -eq 0 ]; then
-  echo "Checking gitsign executable permissions..."
+echo "Checking gitsign executable permissions..."
 
-  if [ ! -x "$(command -v gitsign)" ]; then
-    echo "::error::gitsign binary is not executable"
-    VALIDATION_FAILED=1
-    FAILURE_MESSAGE="gitsign binary is not executable"
-  else
-    echo "✓ gitsign is executable"
-  fi
-  echo ""
+if [ ! -x "${GITSIGN_PATH}" ]; then
+  echo "::error::gitsign binary is not executable: ${GITSIGN_PATH}"
+  VALIDATION_FAILED=1
+  FAILURE_MESSAGE="gitsign binary is not executable"
+else
+  echo "✓ gitsign is executable"
 fi
+echo ""
 
 # ============================================================================
 # OIDC Environment Variables Check
@@ -124,9 +143,9 @@ echo ""
 if [ "$VALIDATION_FAILED" -eq 0 ]; then
   echo "Checking gitsign version..."
 
-  if ! GITSIGN_VERSION=$(gitsign version 2>&1); then
-    echo "::error::Failed to execute 'gitsign version'"
-    echo "::error::gitsign may not be properly installed"
+  if ! GITSIGN_VERSION=$("${GITSIGN_PATH}" version 2>&1); then
+    echo "::error::Failed to execute '${GITSIGN_PATH} version'"
+    echo "::error::gitsign may not be properly installed or configured"
     VALIDATION_FAILED=1
     FAILURE_MESSAGE="Failed to execute 'gitsign version'"
   else
@@ -140,14 +159,18 @@ fi
 # Output Validation Result
 # ============================================================================
 if [ "$VALIDATION_FAILED" -eq 1 ]; then
-  echo "EXIT_STATUS=error:${FAILURE_MESSAGE}"
+  echo "status=error" >> $GITHUB_OUTPUT
+  echo "message=${FAILURE_MESSAGE}" >> $GITHUB_OUTPUT
   echo "=== Gitsign environment validation failed ==="
+  exit 1
 elif [ "${VALIDATION_WARNING:-0}" -eq 1 ]; then
-  echo "EXIT_STATUS=warning:${WARNING_MESSAGE}"
+  echo "status=warning" >> $GITHUB_OUTPUT
+  echo "message=${WARNING_MESSAGE}" >> $GITHUB_OUTPUT
   echo "=== Gitsign environment validated with warnings ==="
+  exit 0
 else
-  echo "EXIT_STATUS=ok:Gitsign environment validated successfully"
+  echo "status=success" >> $GITHUB_OUTPUT
+  echo "message=Gitsign environment validated successfully" >> $GITHUB_OUTPUT
   echo "=== All gitsign validations passed ==="
+  exit 0
 fi
-
-exit 0

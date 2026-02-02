@@ -40,15 +40,16 @@
 set -euo pipefail
 
 # Configuration
-VERSION="${VERSION:-0.14.0}"
+VERSION="${VERSION:-v0.14.0}"
+TAG="${VERSION}"
 TEMP_DIR="${TEMP_DIR:-${RUNNER_TEMP}/gitsign-install}"
 INSTALL_DIR="${RUNNER_TEMP}/bin"
 BASE_URL="https://github.com/sigstore/gitsign/releases/download"
-ARCH_NAME="linux_amd64"
-BINARY_NAME="gitsign_${VERSION#v}_${ARCH_NAME}"
+ARCH_NAME="linux_amd64"  # Note: This script is designed for Linux AMD64 only
+BINARY_NAME="gitsign_${TAG#v}_${ARCH_NAME}"
 CHECKSUM_FILE="checksums.txt"
 
-echo "=== Installing gitsign ${VERSION} ==="
+echo "=== Installing gitsign ${TAG} ==="
 echo ""
 
 # Create directories
@@ -57,41 +58,45 @@ mkdir -p "${INSTALL_DIR}"
 
 # Download gitsign binary
 echo "Downloading gitsign binary..."
-BINARY_URL="${BASE_URL}/v${VERSION#v}/${BINARY_NAME}"
+BINARY_URL="${BASE_URL}/${TAG}/${BINARY_NAME}"
 echo "URL: ${BINARY_URL}"
 
-if ! curl -fsSL -o "${TEMP_DIR}/gitsign" "${BINARY_URL}"; then
+curl -fsSL -o "${TEMP_DIR}/gitsign" "${BINARY_URL}" || {
   echo "::error::Failed to download gitsign binary from ${BINARY_URL}"
-  echo "EXIT_STATUS=error:Failed to download gitsign binary from ${BINARY_URL}"
-  exit 0
-fi
+  echo "status=error" >> $GITHUB_OUTPUT
+  echo "message=Failed to download gitsign binary" >> $GITHUB_OUTPUT
+  exit 1
+}
 echo "✓ Binary downloaded"
 echo ""
 
 # Download checksums
 echo "Downloading checksums..."
-CHECKSUM_URL="${BASE_URL}/${VERSION}/${CHECKSUM_FILE}"
+CHECKSUM_URL="${BASE_URL}/${TAG}/${CHECKSUM_FILE}"
 echo "URL: ${CHECKSUM_URL}"
 
-if ! curl -fsSL -o "${TEMP_DIR}/checksums.txt" "${CHECKSUM_URL}"; then
+curl -fsSL -o "${TEMP_DIR}/checksums.txt" "${CHECKSUM_URL}" || {
   echo "::error::Failed to download checksums from ${CHECKSUM_URL}"
-  echo "EXIT_STATUS=error:Failed to download checksums from ${CHECKSUM_URL}"
-  exit 0
-fi
+  echo "status=error" >> $GITHUB_OUTPUT
+  echo "message=Failed to download checksums" >> $GITHUB_OUTPUT
+  exit 1
+}
 echo "✓ Checksums downloaded"
 echo ""
 
 # Verify checksum
 echo "Verifying checksum..."
-cd "${TEMP_DIR}"
+pushd "${TEMP_DIR}" > /dev/null
 
 # Extract checksum for our binary
 EXPECTED_CHECKSUM=$(awk -v binary="${BINARY_NAME}" '$2 == binary {print $1; exit}' checksums.txt)
 
 if [ -z "${EXPECTED_CHECKSUM}" ]; then
   echo "::error::Could not find checksum for ${BINARY_NAME} in checksums.txt"
-  echo "EXIT_STATUS=error:Could not find checksum for ${BINARY_NAME} in checksums.txt"
-  exit 0
+  echo "status=error" >> $GITHUB_OUTPUT
+  echo "message=Could not find checksum for ${BINARY_NAME} in checksums.txt" >> $GITHUB_OUTPUT
+  popd > /dev/null
+  exit 1
 fi
 
 # Calculate actual checksum
@@ -101,20 +106,24 @@ if [ "${EXPECTED_CHECKSUM}" != "${ACTUAL_CHECKSUM}" ]; then
   echo "::error::Checksum verification failed!"
   echo "::error::Expected: ${EXPECTED_CHECKSUM}"
   echo "::error::Actual:   ${ACTUAL_CHECKSUM}"
-  echo "EXIT_STATUS=error:Checksum verification failed"
-  exit 0
+  echo "status=error" >> $GITHUB_OUTPUT
+  echo "message=Checksum verification failed" >> $GITHUB_OUTPUT
+  popd > /dev/null
+  exit 1
 fi
 
 echo "✓ Checksum verified: ${EXPECTED_CHECKSUM}"
+popd > /dev/null
 echo ""
 
 # Install binary
 echo "Installing gitsign to ${INSTALL_DIR}..."
-if ! install -m 755 gitsign "${INSTALL_DIR}/gitsign"; then
+install -m 755 "${TEMP_DIR}/gitsign" "${INSTALL_DIR}/gitsign" || {
   echo "::error::Failed to install gitsign to ${INSTALL_DIR}"
-  echo "EXIT_STATUS=error:Failed to install gitsign to ${INSTALL_DIR}"
-  exit 0
-fi
+  echo "status=error" >> $GITHUB_OUTPUT
+  echo "message=Failed to install gitsign" >> $GITHUB_OUTPUT
+  exit 1
+}
 echo "✓ Binary installed"
 echo ""
 
@@ -127,16 +136,22 @@ echo ""
 
 # Verify installation
 echo "Verifying installation..."
-if ! "${INSTALL_DIR}/gitsign" version > /dev/null 2>&1; then
+GITSIGN_VERSION=$("${INSTALL_DIR}/gitsign" version 2>&1 | head -3) || {
   echo "::error::gitsign installation verification failed"
-  echo "EXIT_STATUS=error:gitsign installation verification failed"
-  exit 0
-fi
+  echo "status=error" >> $GITHUB_OUTPUT
+  echo "message=gitsign installation verification failed" >> $GITHUB_OUTPUT
+  exit 1
+}
+
+echo "${GITSIGN_VERSION}"
+echo "✓ Installation verified"
+echo ""
 
 echo "=== gitsign installation complete ==="
 
-# Output installation results in parseable format
+# Output installation results
 GITSIGN_FULL_PATH="${INSTALL_DIR}/gitsign"
-echo "EXIT_STATUS=ok:gitsign installed successfully"
-echo "GITSIGN_PATH=${GITSIGN_FULL_PATH}"
+echo "status=success" >> $GITHUB_OUTPUT
+echo "message=gitsign installed successfully" >> $GITHUB_OUTPUT
+echo "gitsign_path=${GITSIGN_FULL_PATH}" >> $GITHUB_OUTPUT
 exit 0
