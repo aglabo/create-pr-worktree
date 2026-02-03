@@ -33,10 +33,10 @@ inputs:
 outputs:
   gitsign-path:
     description: "Absolute path to the installed gitsign binary"
-    value: ${{ steps.install-gitsign.outputs.gitsign_path }}
+    value: ${{ steps.install-gitsign.outputs.gitsign-path }}
   worktree-path:
     description: "Absolute path to the created worktree"
-    value: ${{ steps.create-worktree.outputs.worktree_path }}
+    value: ${{ steps.create-worktree.outputs.worktree-path }}
   status:
     description: "Overall setup status (success, error, warning)"
     value: ${{ steps.set-final-status.outputs.status }}
@@ -137,7 +137,7 @@ runs:
 
         # Get absolute path
         WORKTREE_PATH=$(cd "${WORKTREE_DIR}" && pwd)
-        echo "worktree_path=${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+        echo "worktree-path=${WORKTREE_PATH}" >> $GITHUB_OUTPUT
         echo "status=success" >> $GITHUB_OUTPUT
         echo "message=Worktree created successfully" >> $GITHUB_OUTPUT
         echo "✓ Worktree created at: ${WORKTREE_PATH}"
@@ -149,14 +149,14 @@ runs:
         steps.create-worktree.outcome == 'success'
       shell: bash
       run: |
-        cd "${{ steps.create-worktree.outputs.worktree_path }}"
+        cd "${{ steps.create-worktree.outputs.worktree-path }}"
 
         echo "Configuring gitsign for signed commits..."
 
         # Configure git to use gitsign
         git config --local commit.gpgsign true
         git config --local gpg.format x509
-        git config --local gpg.x509.program "${{ steps.install-gitsign.outputs.gitsign_path }}"
+        git config --local gpg.x509.program "${{ steps.install-gitsign.outputs.gitsign-path }}"
 
         echo "✓ Gitsign configured"
 
@@ -172,7 +172,7 @@ runs:
         steps.create-worktree.outcome == 'success'
       shell: bash
       run: |
-        cd "${{ steps.create-worktree.outputs.worktree_path }}"
+        cd "${{ steps.create-worktree.outputs.worktree-path }}"
 
         echo "Setting git user configuration..."
 
@@ -250,9 +250,9 @@ runs:
       run: |
         echo ""
         echo "=== Worktree Initialization Complete ==="
-        echo "Worktree Path: ${{ steps.create-worktree.outputs.worktree_path }}"
+        echo "Worktree Path: ${{ steps.create-worktree.outputs.worktree-path }}"
         echo "Branch: ${{ inputs.branch-name }}"
-        echo "Gitsign Version: $( "${{ steps.install-gitsign.outputs.gitsign_path }}" --version | head -1)"
+        echo "Gitsign Version: $( "${{ steps.install-gitsign.outputs.gitsign-path }}" --version | head -1)"
         echo "Setup Status: ${{ steps.set-final-status.outputs.status }}"
         echo "Message: ${{ steps.set-final-status.outputs.message }}"
         echo ""

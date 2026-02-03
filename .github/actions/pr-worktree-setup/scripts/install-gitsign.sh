@@ -153,5 +153,5 @@ echo "=== gitsign installation complete ==="
 GITSIGN_FULL_PATH="${INSTALL_DIR}/gitsign"
 echo "status=success" >> $GITHUB_OUTPUT
 echo "message=gitsign installed successfully" >> $GITHUB_OUTPUT
-echo "gitsign_path=${GITSIGN_FULL_PATH}" >> $GITHUB_OUTPUT
+echo "gitsign-path=${GITSIGN_FULL_PATH}" >> $GITHUB_OUTPUT
 exit 0
