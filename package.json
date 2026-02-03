@@ -7,6 +7,7 @@
   "license": "MIT",
   "scripts": {
     "prepare": "bash ./scripts/prepare.sh",
+    "scan:secrets": "gitleaks dir --config ./configs/gitleaks.toml . && secretlint --secretlintrc ./configs/secretlint.config.yaml **/*",
     "lint:text": "pnpm exec textlint --config ./configs/textlintrc.yaml --cache --cache-location .cache/textlintcache ",
     "lint:text:fix": "pnpm run lint:text --fix ",
     "lint:markdown": "pnpm exec markdownlint-cli2 --config ./configs/.markdownlint.yaml ",
