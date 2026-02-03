@@ -25,37 +25,69 @@ inputs:
 outputs:
   status:
     description: "Status of cleanup operation (success, skipped, error)"
-    value: ${{ steps.get_worktree.outputs.status || steps.validate_worktree.outputs.status || steps.cleanup_worktree.outputs.status }}
+    value: ${{ steps.get-worktree.outputs.status || steps.validate-worktree.outputs.status || steps.cleanup-worktree.outputs.status }}
+  reason:
+    description: "Reason for the cleanup result (removed, removed-dirty, no-path, already-removed, multiple, no-worktrees, not-registered, missing-marker, invalid-worktree, uncommitted, git-failed, removal-failed)"
+    value: ${{ steps.get-worktree.outputs.reason || steps.validate-worktree.outputs.reason || steps.cleanup-worktree.outputs.reason }}
   message:
     description: "Detailed message about the cleanup operation"
-    value: ${{ steps.get_worktree.outputs.message || steps.validate_worktree.outputs.message || steps.cleanup_worktree.outputs.message }}
+    value: ${{ steps.get-worktree.outputs.message || steps.validate-worktree.outputs.message || steps.cleanup-worktree.outputs.message }}
   removed-path:
-    description: "Path of the removed worktree"
-    value: ${{ steps.get_worktree.outputs.worktree-path }}
+    description: "Path of the removed worktree (empty if not removed)"
+    value: ${{ steps.get-worktree.outputs.worktree-path }}
+  worktree-count:
+    description: "Number of worktrees found during auto-detection (0 if not using auto-detection)"
+    value: ${{ steps.get-worktree.outputs.worktree-count || '0' }}
+  worktree-list:
+    description: "List of worktree paths found during auto-detection (empty if not using auto-detection)"
+    value: ${{ steps.get-worktree.outputs.worktree-list }}
 
 runs:
   using: composite
   steps:
+    - name: Get base branch
+      id: get-base-branch
+      if: inputs.worktree-dir == ''
+      shell: bash
+      run: |
+        # Priority 1: Explicit input
+        BASE_BRANCH="${{ inputs.base-branch }}"
+
+        # Priority 2: GitHub context (PR base or default)
+        if [ -z "${BASE_BRANCH}" ]; then
+          BASE_BRANCH="${GITHUB_BASE_REF:-main}"
+        fi
+
+        # Priority 3: Try detection as last resort (don't fail if it doesn't work)
+        if [ "${BASE_BRANCH}" = "main" ]; then
+          DETECTED_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+          if [ -n "${DETECTED_BRANCH}" ]; then
+            BASE_BRANCH="${DETECTED_BRANCH}"
+          fi
+        fi
+
+        echo "Using base branch: ${BASE_BRANCH}"
+        echo "base-branch=${BASE_BRANCH}" >> $GITHUB_OUTPUT
+
     - name: Get worktree path
-      id: get_worktree
+      id: get-worktree
       shell: bash
       run: |
         WORKTREE_PATH=""
         STATUS=""
         MESSAGE=""
+        REASON=""
+        WORKTREE_COUNT=0
+        WORKTREE_LIST=""
 
         if [ -n "${{ inputs.worktree-dir }}" ]; then
-          # Use provided worktree-dir
+          # Use provided worktree-dir (recommended)
           WORKTREE_PATH="${{ inputs.worktree-dir }}"
           echo "Using provided worktree path: ${WORKTREE_PATH}"
         else
-          # Auto-detect worktree: First count, then decide
-          if [ -n "${{ inputs.base-branch }}" ]; then
-            BASE_BRANCH="${{ inputs.base-branch }}"
-          else
-            BASE_BRANCH=$(git symbolic-ref --short HEAD)
-          fi
-
+          # Auto-detect worktree using base branch from previous step (fallback)
+          echo "::warning::Auto-detection is a fallback feature. Explicitly specify worktree-dir for production use."
+          BASE_BRANCH="${{ steps.get-base-branch.outputs.base-branch }}"
           echo "Auto-detecting worktree (excluding base branch: ${BASE_BRANCH})"
 
           # Get list of worktrees excluding base branch
@@ -83,12 +115,14 @@ runs:
           if [ "${WORKTREE_COUNT}" -eq 0 ]; then
             echo "::notice::No worktrees found to clean up (excluding base branch: ${BASE_BRANCH})"
             STATUS="skipped"
+            REASON="no-worktrees"
             MESSAGE="No worktrees found to clean up (excluding base branch: ${BASE_BRANCH})"
           elif [ "${WORKTREE_COUNT}" -gt 1 ]; then
             echo "::notice::Multiple worktrees found (${WORKTREE_COUNT}), skipping auto-detection. Please specify worktree-dir explicitly."
             echo "Available worktrees:"
             echo "${WORKTREE_LIST}"
             STATUS="skipped"
+            REASON="multiple"
             MESSAGE="Multiple worktrees found (${WORKTREE_COUNT}), specify worktree-dir explicitly"
           else
             # Exactly 1 worktree: continue with cleanup
@@ -99,56 +133,104 @@ runs:
 
         echo "worktree-path=${WORKTREE_PATH}" >> $GITHUB_OUTPUT
         echo "status=${STATUS}" >> $GITHUB_OUTPUT
+        echo "reason=${REASON}" >> $GITHUB_OUTPUT
         echo "message=${MESSAGE}" >> $GITHUB_OUTPUT
+        echo "worktree-count=${WORKTREE_COUNT}" >> $GITHUB_OUTPUT
+        echo "worktree-list<<EOF" >> $GITHUB_OUTPUT
+        echo "${WORKTREE_LIST}" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
 
     - name: Validate worktree
-      id: validate_worktree
-      if: steps.get_worktree.outputs.status != 'skipped'
+      id: validate-worktree
+      if: steps.get-worktree.outcome == 'success' && steps.get-worktree.outputs.status != 'skipped'
       shell: bash
       run: |
-        WORKTREE_PATH="${{ steps.get_worktree.outputs.worktree-path }}"
+        WORKTREE_PATH="${{ steps.get-worktree.outputs.worktree-path }}"
+        HAS_UNCOMMITTED="false"
 
         # Check if worktree path is provided
         if [ -z "${WORKTREE_PATH}" ]; then
           echo "status=skipped" >> $GITHUB_OUTPUT
+          echo "reason=no-path" >> $GITHUB_OUTPUT
           echo "message=No worktree path specified" >> $GITHUB_OUTPUT
           exit 0
         fi
 
         # Check if directory exists
         if [ ! -d "${WORKTREE_PATH}" ]; then
-          echo "status=error" >> $GITHUB_OUTPUT
-          echo "message=Worktree directory does not exist: ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
-          echo "::error::Worktree directory does not exist: ${WORKTREE_PATH}"
+          echo "::notice::Directory does not exist (already cleaned up): ${WORKTREE_PATH}"
+          echo "status=skipped" >> $GITHUB_OUTPUT
+          echo "reason=already-removed" >> $GITHUB_OUTPUT
+          echo "message=Directory does not exist: ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
           exit 0
         fi
 
-        # Validate it's a git worktree (check for .git file)
+        # Authoritative check: Is worktree registered?
+        if ! git worktree list --porcelain | grep -q "^worktree ${WORKTREE_PATH}$"; then
+          echo "::error::Path is not a registered git worktree: ${WORKTREE_PATH}"
+          echo "::error::Directory may exist but is not managed by git worktree"
+          echo "status=error" >> $GITHUB_OUTPUT
+          echo "reason=not-registered" >> $GITHUB_OUTPUT
+          echo "message=Path is not a registered git worktree: ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+        # Secondary check: Verify .git worktree marker exists
         if [ ! -e "${WORKTREE_PATH}/.git" ]; then
+          echo "::error::Directory is missing .git worktree marker: ${WORKTREE_PATH}"
           echo "status=error" >> $GITHUB_OUTPUT
-          echo "message=Directory is not a valid git worktree: ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
-          echo "::error::Directory is not a valid git worktree: ${WORKTREE_PATH}"
-          exit 0
+          echo "reason=missing-marker" >> $GITHUB_OUTPUT
+          echo "message=Directory is missing .git worktree marker: ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+          exit 1
         fi
 
-        # Check for uncommitted changes if force=false
-        if [ "${{ inputs.force }}" = "false" ]; then
-          if [ -n "$(git -C "${WORKTREE_PATH}" status --porcelain)" ]; then
+        # First, validate worktree is valid git repository
+        if ! git -C "${WORKTREE_PATH}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          echo "::error::Path is not a valid git working tree: ${WORKTREE_PATH}"
+          echo "status=error" >> $GITHUB_OUTPUT
+          echo "reason=invalid-worktree" >> $GITHUB_OUTPUT
+          echo "message=Path is not a valid git working tree: ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+        # Now safe to check for uncommitted changes
+        UNCOMMITTED_CHANGES=$(git -C "${WORKTREE_PATH}" status --porcelain 2>&1)
+        GIT_STATUS_EXIT=$?
+
+        if [ ${GIT_STATUS_EXIT} -ne 0 ]; then
+          echo "::error::Failed to check worktree status: ${WORKTREE_PATH}"
+          echo "status=error" >> $GITHUB_OUTPUT
+          echo "reason=git-failed" >> $GITHUB_OUTPUT
+          echo "message=Failed to check worktree status" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+        if [ -n "${UNCOMMITTED_CHANGES}" ]; then
+          HAS_UNCOMMITTED="true"
+          if [ "${{ inputs.force }}" = "false" ]; then
+            echo "::error::Cannot remove worktree with uncommitted changes (force=false)"
+            echo "::error::Changes found:"
+            echo "${UNCOMMITTED_CHANGES}"
+            echo "::error::Set force=true to override"
             echo "status=error" >> $GITHUB_OUTPUT
-            echo "message=Cannot remove worktree with uncommitted changes (force=false): ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
-            echo "::error::Cannot remove worktree with uncommitted changes. Set force=true to override: ${WORKTREE_PATH}"
-            exit 0
+            echo "reason=uncommitted" >> $GITHUB_OUTPUT
+            echo "message=Cannot remove worktree with uncommitted changes (force=false)" >> $GITHUB_OUTPUT
+            exit 1
           fi
         fi
 
         echo "Validation passed for worktree: ${WORKTREE_PATH}"
+        echo "has-uncommitted=${HAS_UNCOMMITTED}" >> $GITHUB_OUTPUT
 
     - name: Cleanup worktree
-      id: cleanup_worktree
-      if: steps.validate_worktree.result == 'success' && steps.get_worktree.outputs.status != 'skipped' && steps.validate_worktree.outputs.status != 'skipped' && steps.validate_worktree.outputs.status != 'error'
+      id: cleanup-worktree
+      if: |
+        steps.get-worktree.outcome == 'success' &&
+        steps.get-worktree.outputs.status != 'skipped' &&
+        steps.validate-worktree.outcome == 'success'
       shell: bash
       run: |
-        WORKTREE_PATH="${{ steps.get_worktree.outputs.worktree-path }}"
+        WORKTREE_PATH="${{ steps.get-worktree.outputs.worktree-path }}"
 
         echo "Removing worktree at: ${WORKTREE_PATH}"
 
@@ -160,11 +242,21 @@ runs:
 
         # Execute removal
         if git worktree remove ${FORCE_FLAG} "${WORKTREE_PATH}"; then
+          # Determine reason based on whether worktree was dirty
+          HAS_UNCOMMITTED="${{ steps.validate-worktree.outputs.has-uncommitted }}"
+          if [ "${HAS_UNCOMMITTED}" = "true" ]; then
+            REASON="removed-dirty"
+          else
+            REASON="removed"
+          fi
+
           echo "status=success" >> $GITHUB_OUTPUT
+          echo "reason=${REASON}" >> $GITHUB_OUTPUT
           echo "message=Worktree removed successfully: ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
           echo "✓ Removed worktree at: ${WORKTREE_PATH}"
         else
           echo "status=error" >> $GITHUB_OUTPUT
+          echo "reason=removal-failed" >> $GITHUB_OUTPUT
           echo "message=Failed to remove worktree: ${WORKTREE_PATH}" >> $GITHUB_OUTPUT
           echo "::error::Failed to remove worktree at: ${WORKTREE_PATH}"
           exit 1
@@ -176,9 +268,9 @@ runs:
       if: always()
       shell: bash
       run: |
-        STATUS="${{ steps.get_worktree.outputs.status || steps.validate_worktree.outputs.status || steps.cleanup_worktree.outputs.status }}"
-        MESSAGE="${{ steps.get_worktree.outputs.message || steps.validate_worktree.outputs.message || steps.cleanup_worktree.outputs.message }}"
-        WORKTREE_PATH="${{ steps.get_worktree.outputs.worktree-path }}"
+        STATUS="${{ steps.get-worktree.outputs.status || steps.cleanup-worktree.outputs.status }}"
+        MESSAGE="${{ steps.get-worktree.outputs.message || steps.cleanup-worktree.outputs.message }}"
+        WORKTREE_PATH="${{ steps.get-worktree.outputs.worktree-path }}"
 
         echo ""
         echo "=== Worktree Cleanup Complete ==="
