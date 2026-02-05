@@ -79,6 +79,12 @@
 #   - PR update: 30 seconds
 #   - PR info retrieval: 30 seconds
 #
+# @note Interface design:
+#   This script intentionally uses positional arguments for simplicity and
+#   explicit parameter passing. Future versions may evolve to environment-based
+#   options if additional parameters (labels, auto-merge, draft) are needed
+#   to avoid positional argument explosion.
+#
 # @author atsushifx
 # @version 1.0.0
 # @license MIT
@@ -140,11 +146,12 @@ check_existing_pr() {
   local base_branch="$2"
   local existing_pr
 
+  # Query without stderr mixing - let stderr go to console naturally
   if ! existing_pr=$(timeout "${TIMEOUT_PR_CHECK}s" gh pr list \
     --head "$pr_branch" \
     --base "$base_branch" \
     --json number \
-    --jq '.[0].number' 2>&1); then
+    --jq '.[0].number'); then
     return $?
   fi
 
@@ -154,12 +161,12 @@ check_existing_pr() {
 
 # @description Create new Pull Request with provided details.
 #   This function creates PR body file and calls gh pr create.
+#   Uses mktemp to avoid file conflicts in concurrent scenarios.
 #
 # @arg $1 string Base branch
 # @arg $2 string PR branch (head)
 # @arg $3 string PR title
 # @arg $4 string PR body content
-# @arg $5 string Path to temp directory
 #
 # @exitcode 0 PR created successfully
 # @exitcode 124 Timeout
@@ -184,7 +191,6 @@ create_new_pr() {
   trap 'rm -f "$body_file"' RETURN
 
   # Prepare body file
-  mkdir -p "${temp_dir}/temp"
   printf '%s\n' "$pr_body" > "$body_file"
 
   # Create PR with timeout - gh pr create outputs URL to stdout on success
@@ -202,33 +208,35 @@ create_new_pr() {
 
 # @description Update existing Pull Request title and body.
 #   This function updates PR using gh pr edit.
+#   Uses mktemp to avoid file conflicts in concurrent scenarios.
 #
 # @arg $1 string PR number
 # @arg $2 string PR title
 # @arg $3 string PR body content
-# @arg $4 string Path to temp directory
 #
 # @exitcode 0 PR updated successfully
 # @exitcode 124 Timeout
 # @exitcode 1 Update failed
 #
 # @example
-#   update_existing_pr "123" "New Title" "New Body" "${RUNNER_TEMP}"
+#   update_existing_pr "123" "New Title" "New Body"
 update_existing_pr() {
   local pr_number="$1"
   local pr_title="$2"
   local pr_body="$3"
-  local temp_dir="$4"
-  local body_file="${temp_dir}/temp/pr_body.txt"
+  local body_file
+
+  # Create temporary file (safer than fixed path)
+  body_file=$(mktemp) || return "$EXIT_ERROR"
+  trap 'rm -f "$body_file"' RETURN
 
   # Prepare body file
-  mkdir -p "${temp_dir}/temp"
   printf '%s\n' "$pr_body" > "$body_file"
 
-  # Update PR with timeout
+  # Update PR with timeout (no stderr mixing)
   if ! timeout "${TIMEOUT_PR_UPDATE}s" gh pr edit "$pr_number" \
     --title "$pr_title" \
-    --body-file "$body_file" 2>&1; then
+    --body-file "$body_file"; then
     return $?
   fi
 
@@ -256,11 +264,12 @@ get_pr_info() {
   local base_branch="$2"
   local pr_json
 
+  # Query without stderr mixing - let stderr go to console naturally
   if ! pr_json=$(timeout "${TIMEOUT_PR_INFO}s" gh pr list \
     --head "$pr_branch" \
     --base "$base_branch" \
     --json number,url \
-    --jq '.[0]' 2>&1); then
+    --jq '.[0]'); then
     return $?
   fi
 
@@ -414,15 +423,16 @@ extract_pr_data() {
 #
 # @arg $1 integer Exit code from check_existing_pr()
 #
-# @noreturn This function always exits with EXIT_ERROR
+# @return 0 Always returns success to continue with PR creation
 #
-# @stdout Error messages and GitHub Actions annotations
+# @stdout Warning messages and GitHub Actions annotations
 handle_check_error() {
   local exit_code=$1
 
   case $exit_code in
     "$EXIT_TIMEOUT")
-      echo "::error::GitHub API call (gh pr list) timed out after ${TIMEOUT_PR_CHECK} seconds"
+      echo "::warning::GitHub API call (gh pr list) timed out after ${TIMEOUT_PR_CHECK} seconds"
+      echo "::warning::Assuming no existing PR, will attempt to create new one"
       ;;
     *)
       echo "::warning::Failed to check existing PR, assuming none exists"
@@ -471,7 +481,8 @@ handle_update_error() {
 
   case $exit_code in
     "$EXIT_TIMEOUT")
-      echo "::error::GitHub API call (gh pr edit) timed out after ${TIMEOUT_PR_UPDATE} seconds"
+      echo "::warning::GitHub API call (gh pr edit) timed out after ${TIMEOUT_PR_UPDATE} seconds"
+      echo "::warning::PR update failed, but PR exists and can be updated manually"
       ;;
     *)
       echo "::warning::Failed to update PR title/body"
@@ -580,10 +591,10 @@ write_outputs_and_exit() {
 
   # Display success message
   case "$operation" in
-    updated)
+    "$OPERATION_UPDATED")
       echo "✓ Updated PR #$pr_number: $pr_url"
       ;;
-    created)
+    "$OPERATION_CREATED")
       echo "✓ Created PR #$pr_number: $pr_url"
       ;;
     "$OPERATION_UPDATE_FAILED")
