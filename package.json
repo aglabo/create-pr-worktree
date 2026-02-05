@@ -1,5 +1,5 @@
 {
-  "name": "create-pr-sandbox",
+  "name": "create-pr-worktree",
   "private": true,
   "version": "0.0.1",
   "description": "create-pr composite actions",
