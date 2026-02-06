@@ -353,16 +353,26 @@ jobs:
         if: always()
         run: |
           # Determine overall workflow status based on step outcomes
+          # Priority: filter.outputs.status (explicit skipped) > outcome checks > default error
+
           if [ "${{ steps.filter.outputs.status }}" = "skipped" ]; then
+            # Case 1: Filter explicitly set status=skipped (no files needing fix)
             echo "status=skipped" >> "$GITHUB_OUTPUT"
             echo "Workflow completed: No scripts to fix"
+          elif [ "${{ steps.filter.outcome }}" = "skipped" ]; then
+            # Case 2: Filter step was skipped (no changed scripts detected)
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+            echo "Workflow completed: No changed shell scripts detected"
           elif [ "${{ steps.create-pr.outcome }}" = "success" ]; then
+            # Case 3: PR created/updated successfully
             echo "status=success" >> "$GITHUB_OUTPUT"
             echo "Workflow completed: PR created/updated successfully"
           elif [ "${{ steps.filter.outcome }}" = "failure" ] || [ "${{ steps.apply.outcome }}" = "failure" ]; then
+            # Case 4: Explicit failure during processing
             echo "status=error" >> "$GITHUB_OUTPUT"
             echo "::error::Workflow failed during permission fix"
           else
+            # Case 5: Unknown state (should not happen)
             echo "status=error" >> "$GITHUB_OUTPUT"
             echo "::error::Workflow failed for unknown reason"
           fi
