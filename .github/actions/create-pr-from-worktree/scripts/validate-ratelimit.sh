@@ -318,8 +318,6 @@ output_rate_limit_status() {
   local reset_date=$4
   local message
 
-  echo "== (${remaining}/${total} remaining) =="
-
   case "$status" in
     error)
       message="Rate limit exhausted (${remaining}/${total} remaining)"
@@ -462,11 +460,15 @@ main() {
 
   status=$(determine_status "$remaining")
 
+  echo ">> Rate limit status: $status"
+  echo ""
+
   # ========================================
   # Output & Exit
   # ========================================
 
   message=$(output_rate_limit_status "$status" "$remaining" "$total" "$reset_date")
+  echo ">>Message: $message"
 
   write_output_and_exit "$status" "$message"
 }
