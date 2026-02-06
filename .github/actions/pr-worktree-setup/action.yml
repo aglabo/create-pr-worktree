@@ -67,7 +67,7 @@ runs:
       if: steps.validate-gitsign.outcome == 'success'
       shell: bash
       run: |
-        WORKTREE_DIR=""${RUNNER_TEMP}/${{ inputs.worktree-dir }}"
+        WORKTREE_DIR="${RUNNER_TEMP}/${{ inputs.worktree-dir }}"
 
         # Check if directory already exists
         if [ -e "${WORKTREE_DIR}" ]; then
