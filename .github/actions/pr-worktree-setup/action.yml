@@ -67,7 +67,7 @@ runs:
       if: steps.validate-gitsign.outcome == 'success'
       shell: bash
       run: |
-        WORKTREE_DIR="${{ inputs.worktree-dir }}"
+        WORKTREE_DIR=""${RUNNER_TEMP}/${{ inputs.worktree-dir }}"
 
         # Check if directory already exists
         if [ -e "${WORKTREE_DIR}" ]; then
@@ -79,9 +79,11 @@ runs:
           exit 1
         fi
 
-        # Validate parent directory exists and is writable
+        # create parent directory
         PARENT_DIR=$(dirname "${WORKTREE_DIR}")
         mkdir -p "${PARENT_DIR}"
+
+        # Validate parent directory exists and is writable
         if [ ! -d "${PARENT_DIR}" ]; then
           echo "::error::Parent directory does not exist: ${PARENT_DIR}"
           echo "::error::Cannot create worktree - parent directory must exist first"
