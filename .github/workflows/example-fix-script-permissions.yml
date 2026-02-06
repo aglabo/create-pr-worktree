@@ -42,6 +42,7 @@ jobs:
       files-pattern: "**/*.sh"
       files-ignore-pattern: "node_modules/**\n.git/**\nvendor/**"
       pr-branch-prefix: "fix-permissions"
+      debug-base-sha: "97507a0"
 
   display-results:
     name: Display Results
