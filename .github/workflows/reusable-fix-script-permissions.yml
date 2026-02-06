@@ -239,25 +239,24 @@ jobs:
             fi
           done
 
-          # Handle no-work case
+          # Output results based on whether fixes are needed
           if [ "$total_missing_perms" -eq 0 ]; then
             echo "::notice::All changed shell scripts with shebang already have execute permission"
             echo "status=skipped" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Display files that need permission fix
-          echo "Files needing execute permission ($total_missing_perms):"
-          echo -e "$scripts_without_exec"
-
-          # Output results
-          {
-            echo "status=success"
-            echo "count=$total_missing_perms"
-            echo "scripts<<EOF"
+          else
+            # Display files that need permission fix
+            echo "Files needing execute permission ($total_missing_perms):"
             echo -e "$scripts_without_exec"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+
+            # Output results
+            {
+              echo "status=success"
+              echo "count=$total_missing_perms"
+              echo "scripts<<EOF"
+              echo -e "$scripts_without_exec"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
 
       # ============================================
       # Worktree Setup (pr-worktree-setup action)
@@ -265,7 +264,7 @@ jobs:
       # ============================================
       - name: Setup isolated worktree using pr-worktree-setup action
         id: setup
-        if: steps.filter.outcome == 'success'
+        if: steps.filter.outcome == 'success' && steps.filter.outputs.status == 'success'
         uses: ./.github/actions/pr-worktree-setup
         with:
           branch-name: ${{ steps.vars.outputs.pr-branch }}
