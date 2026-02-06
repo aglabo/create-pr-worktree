@@ -151,9 +151,8 @@ jobs:
           # FORMAT: worktree/{sanitized_pr_branch}
           # DESIGN: Replace slashes with hyphens to avoid deep directory hierarchies
           sanitized_pr_branch="${pr_branch//\//-}"
-          worktree_dir="${runner-temp}/worktree/${sanitized_pr_branch}"
-          # for create worktree-dir
-          worktree_parent = $(dirname "$worktree_dir")
+          worktree_dir="${RUNNER_TEMP}/worktree/${sanitized_pr_branch}"
+          worktree_parent=$(dirname "$worktree_dir")
           mkdir -p "$worktree_parent"
 
           # ============================================
@@ -263,7 +262,6 @@ jobs:
       # ============================================
       - name: Setup isolated worktree using pr-worktree-setup action
         id: setup
-        if: steps.filter.outcome == 'success'
         uses: aglabo/create-pr-worktree/.github/actions/pr-worktree-setup@v0.1.0
         with:
           branch-name: ${{ steps.vars.outputs.pr-branch }}
