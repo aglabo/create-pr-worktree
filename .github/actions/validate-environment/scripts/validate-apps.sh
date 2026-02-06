@@ -54,7 +54,7 @@
 # @exitcode 1 Application validation failed (one or more apps missing or invalid)
 #
 # @author   atsushifx
-# @version  1.2.0
+# @version  0.1.1
 # @license  MIT
 
 set -euo pipefail
