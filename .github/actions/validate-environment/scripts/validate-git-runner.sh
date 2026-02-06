@@ -26,7 +26,7 @@
 # @exitcode 1 GitHub runner validation failed
 #
 # @author   atsushifx
-# @version  1.2.0
+# @version  0.1.0
 # @license  MIT
 
 set -euo pipefail

@@ -131,8 +131,7 @@ runs:
         EXPECTED_ARCHITECTURE: ${{ inputs.architecture }}
       run: |
         set -euo pipefail
-        echo "Local Action: Validate Environment"
-        "${GITHUB_ACTION_PATH}/scripts/validate-git-runner.sh"
+        bash "${GITHUB_ACTION_PATH}/scripts/validate-git-runner.sh"
       # Outputs: status, message (written to $GITHUB_OUTPUT by script)
 
     - name: "Validate required applications"
@@ -147,8 +146,8 @@ runs:
           # Each definition format: cmd|app_name|version_extractor|min_version
           # Filter out empty lines and pass as separate arguments
           readarray -t app_defs < <(echo "${ADDITIONAL_APPS}" | grep -v '^[[:space:]]*$')
-          "${GITHUB_ACTION_PATH}/scripts/validate-apps.sh" "${app_defs[@]}"
+          bash "${GITHUB_ACTION_PATH}/scripts/validate-apps.sh" "${app_defs[@]}"
         else
-          "${GITHUB_ACTION_PATH}/scripts/validate-apps.sh"
+          bash "${GITHUB_ACTION_PATH}/scripts/validate-apps.sh"
         fi
       # Outputs: status, message, validated_apps, validated_count, failed_apps, failed_count
