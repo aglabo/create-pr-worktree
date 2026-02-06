@@ -73,9 +73,10 @@ jobs:
 
     steps:
       # ============================================
-      # STEP 1: Validate Environment
+      # Environment Validation
+      # Purpose: Verify runner meets requirements (architecture, required tools: gh, jq)
       # ============================================
-      - name: Validate runner environment
+      - name: Validate runner environment and required tools
         id: validate-env
         uses: aglabo/.github/.github/actions/validate-environment@2d0d5b6168a6a93547aaa309b7237cd39e3fe5e7 # r1.2.0
         with:
@@ -84,18 +85,20 @@ jobs:
             "gh|gh (Github CLI)|regex:version ([0-9.]+)|2.0  jq|jq||"
 
       # ============================================
-      # STEP 2: Checkout
+      # Repository Checkout
+      # Purpose: Clone repository with full history for changed-files detection
       # ============================================
-      - name: Checkout repository
+      - name: Checkout repository with full history
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0 # Full history for changed-files
           persist-credentials: true # Required for worktree operations and git push
 
       # ============================================
-      # STEP 3: Setup Variables
+      # Branch and Pattern Configuration
+      # Purpose: Configure PR branch name, worktree path, and file search patterns
       # ============================================
-      - name: Setup workflow variables
+      - name: Setup branch names and file patterns
         id: vars
         run: |
           # ============================================
@@ -164,9 +167,10 @@ jobs:
           echo "  - Worktree directory: $worktree_dir"
 
       # ============================================
-      # STEP 4: Detect Changed Shell Scripts
+      # Shell Script Detection
+      # Purpose: Identify shell scripts modified in current commit/push
       # ============================================
-      - name: Detect changed shell scripts
+      - name: Detect changed shell scripts using tj-actions/changed-files
         id: changed-scripts
         uses: tj-actions/changed-files@e0021407031f5be11a464abee9a0776171c79891 # v47.0.1 - CVE-2025-30066 patched
         with:
@@ -175,9 +179,10 @@ jobs:
           separator: "\n"
 
       # ============================================
-      # STEP 5: Filter Scripts Without Execute Permission
+      # Permission Filtering
+      # Purpose: Check git index mode (100644 vs 100755) to find scripts needing +x
       # ============================================
-      - name: Filter scripts without execute permission
+      - name: Filter scripts missing execute permission from git index
         id: filter
         if: steps.changed-scripts.outputs.any_changed == 'true'
         run: |
@@ -237,9 +242,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # ============================================
-      # STEP 6: Setup Worktree
+      # Worktree Setup (pr-worktree-setup action)
+      # Purpose: Create isolated worktree on new branch with gitsign configuration
       # ============================================
-      - name: Setup worktree for permission fix
+      - name: Setup isolated worktree using pr-worktree-setup action
         id: setup
         if: steps.filter.outcome == 'success'
         uses: aglabo/create-pr-worktree/.github/actions/pr-worktree-setup@v0.1.0
@@ -248,9 +254,10 @@ jobs:
           worktree-dir: ${{ runner.temp }}/${{ steps.vars.outputs.worktree-dir }}
 
       # ============================================
-      # STEP 7: Apply Execute Permissions
+      # Permission Application
+      # Purpose: Add execute permission to filtered scripts in worktree
       # ============================================
-      - name: Apply execute permissions
+      - name: Apply execute permissions using git update-index
         id: apply
         if: steps.filter.outcome == 'success' && steps.setup.outcome == 'success'
         working-directory: ${{ steps.setup.outputs.worktree-path }}
@@ -282,9 +289,10 @@ jobs:
           echo "applied-count=$applied_count" >> "$GITHUB_OUTPUT"
 
       # ============================================
-      # STEP 8: Create Pull Request
+      # Pull Request Creation (create-pr-from-worktree action)
+      # Purpose: Commit changes with gitsign signature and create/update PR
       # ============================================
-      - name: Create pull request
+      - name: Create pull request using create-pr-from-worktree action
         id: create-pr
         if: steps.apply.outcome == 'success'
         uses: aglabo/create-pr-worktree/.github/actions/create-pr-from-worktree@v0.1.0
@@ -322,9 +330,10 @@ jobs:
           merge-method: squash
 
       # ============================================
-      # STEP 9: Cleanup Worktree
+      # Worktree Cleanup (pr-worktree-cleanup action)
+      # Purpose: Remove worktree directory and prune git references
       # ============================================
-      - name: Cleanup worktree
+      - name: Cleanup worktree using pr-worktree-cleanup action
         if: always()
         uses: aglabo/create-pr-worktree/.github/actions/pr-worktree-cleanup@v0.1.0
         with:
@@ -332,9 +341,10 @@ jobs:
           force: true
 
       # ============================================
-      # STEP 10: Set Final Status
+      # Final Status Reporting
+      # Purpose: Aggregate step outcomes and set workflow outputs (success/skipped/error)
       # ============================================
-      - name: Set final status
+      - name: Set final workflow status for outputs
         id: set-status
         if: always()
         run: |
