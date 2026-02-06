@@ -1,12 +1,12 @@
-# src: ./.github/actions/pr-worktree-initialize/action.yml
-# @(#) : Composite action to initialize worktree with gitsign for signed commits
+# src: ./.github/actions/pr-worktree-setup/action.yml
+# @(#) : create git worktree and setup gitsign for signed commits
 #
 # Copyright (c) 2026- aglabo <https://github.com/aglabo>
 #
 # This software is released under the MIT License.
 # https://opensource.org/licenses/MIT
 
-name: PR Worktree Initialize
+name: PR Worktree Setup
 description: Create a git worktree and configure gitsign for keyless signed commits using Sigstore
 author: atsushifx
 
@@ -31,56 +31,77 @@ inputs:
     default: "github-actions[bot]@users.noreply.github.com"
 
 outputs:
+  gitsign-path:
+    description: "Absolute path to the installed gitsign binary"
+    value: ${{ steps.install-gitsign.outputs.gitsign-path }}
   worktree-path:
     description: "Absolute path to the created worktree"
-    value: ${{ steps.create_worktree.outputs.worktree_path }}
-  validation-status:
-    description: "Gitsign validation status (ok, error, warning)"
-    value: ${{ steps.validate_gitsign.outputs.status }}
-  validation-message:
-    description: "Validation status message"
-    value: ${{ steps.validate_gitsign.outputs.message }}
-  gitsign-version:
-    description: "Installed gitsign version"
-    value: ${{ steps.verify_install.outputs.version }}
+    value: ${{ steps.create-worktree.outputs.worktree-path }}
+  status:
+    description: "Overall setup status (success, error, warning)"
+    value: ${{ steps.set-final-status.outputs.status }}
+  message:
+    description: "Status message with detailed information"
+    value: ${{ steps.set-final-status.outputs.message }}
 
 runs:
   using: composite
   steps:
     - name: Install gitsign
-      id: install_gitsign
+      id: install-gitsign
       shell: bash
       env:
         VERSION: ${{ inputs.gitsign-version }}
       run: |
-        bash ${{ github.action_path }}/scripts/install-gitsign.sh
+        bash ${{ github.action_path }}/scripts/install-gitsign.sh ${{inputs.gitsign-version }}
 
     - name: Validate gitsign installation
-      id: validate_gitsign
+      id: validate-gitsign
+      if: steps.install-gitsign.outcome == 'success'
       shell: bash
       run: |
-        OUTPUT=$(bash ${{ github.action_path }}/scripts/validate-gitsign.sh)
-        echo "$OUTPUT"
+        bash ${{ github.action_path }}/scripts/validate-gitsign.sh "${{ steps.install-gitsign.outputs.gitsign-path }}"
 
-        # Extract EXIT_STATUS line
-        STATUS_LINE=$(echo "$OUTPUT" | grep "^EXIT_STATUS=" | head -1)
+    - name: Validate worktree directory
+      id: validate-directory
+      if: steps.validate-gitsign.outcome == 'success'
+      shell: bash
+      run: |
+        WORKTREE_DIR="${{ inputs.worktree-dir }}"
 
-        # Extract status (ok|error|warning)
-        STATUS=$(echo "$STATUS_LINE" | cut -d= -f2 | cut -d: -f1)
-        echo "status=$STATUS" >> $GITHUB_OUTPUT
-
-        # Extract message
-        MESSAGE=$(echo "$STATUS_LINE" | cut -d= -f2 | cut -d: -f2-)
-        echo "message=$MESSAGE" >> $GITHUB_OUTPUT
-
-        # Fail if validation failed
-        if [ "$STATUS" = "error" ]; then
-          echo "::error::Gitsign validation failed: $MESSAGE"
+        # Check if directory already exists
+        if [ -e "${WORKTREE_DIR}" ]; then
+          echo "::error::Directory already exists: ${WORKTREE_DIR}"
+          echo "::error::Cannot create worktree at existing location"
+          echo "::error::Please remove the directory first or choose a different path"
+          echo "status=error" >> $GITHUB_OUTPUT
+          echo "message=Directory already exists: ${WORKTREE_DIR}" >> $GITHUB_OUTPUT
           exit 1
         fi
 
+        # Validate parent directory exists and is writable
+        PARENT_DIR=$(dirname "${WORKTREE_DIR}")
+        if [ ! -d "${PARENT_DIR}" ]; then
+          echo "::error::Parent directory does not exist: ${PARENT_DIR}"
+          echo "::error::Cannot create worktree - parent directory must exist first"
+          exit 1
+        fi
+
+        if [ ! -w "${PARENT_DIR}" ]; then
+          echo "::error::Parent directory is not writable: ${PARENT_DIR}"
+          echo "::error::Cannot create worktree - insufficient permissions"
+          exit 1
+        fi
+
+        echo "✓ Worktree directory validation passed"
+        echo "  Target: ${WORKTREE_DIR}"
+        echo "  Parent: ${PARENT_DIR} (exists and writable)"
+
     - name: Create worktree
-      id: create_worktree
+      id: create-worktree
+      if: |
+        steps.validate-gitsign.outcome == 'success' &&
+        steps.validate-directory.outcome == 'success'
       shell: bash
       run: |
         WORKTREE_DIR="${{ inputs.worktree-dir }}"
@@ -89,26 +110,53 @@ runs:
         echo "Creating worktree at: ${WORKTREE_DIR}"
         echo "Branch: ${BRANCH_NAME}"
 
-        # Create worktree with branch
-        git worktree add -B "${BRANCH_NAME}" "${WORKTREE_DIR}"
+        # Check if branch already exists locally
+        if git show-ref --verify --quiet "refs/heads/${BRANCH_NAME}"; then
+          echo "::error::Local branch already exists: ${BRANCH_NAME}"
+          echo "::error::Please use a different branch name or delete the existing branch first"
+          exit 1
+        fi
+
+        # Check if branch already exists on remote (critical for shallow clones)
+        if git ls-remote --exit-code --heads origin "${BRANCH_NAME}" >/dev/null 2>&1; then
+          echo "::error::Remote branch already exists: ${BRANCH_NAME}"
+          echo "::error::This will cause conflicts in git worktree add"
+          echo "::error::Please use a different branch name or delete the remote branch first"
+          exit 1
+        fi
+
+        echo "✓ Branch name is available (checked both local and remote)"
+
+        # Create worktree with new branch
+        if ! git worktree add "${WORKTREE_DIR}" -b "${BRANCH_NAME}"; then
+          echo "::error::Failed to create worktree"
+          echo "status=error" >> $GITHUB_OUTPUT
+          echo "message=Failed to create worktree at ${WORKTREE_DIR}" >> $GITHUB_OUTPUT
+          exit 1
+        fi
 
         # Get absolute path
         WORKTREE_PATH=$(cd "${WORKTREE_DIR}" && pwd)
-        echo "worktree_path=${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+        echo "worktree-path=${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "message=Worktree created successfully" >> $GITHUB_OUTPUT
         echo "✓ Worktree created at: ${WORKTREE_PATH}"
 
     - name: Configure gitsign in worktree
-      id: configure_gitsign
+      id: configure-gitsign
+      if: |
+        steps.validate-gitsign.outcome == 'success' &&
+        steps.create-worktree.outcome == 'success'
       shell: bash
       run: |
-        cd "${{ steps.create_worktree.outputs.worktree_path }}"
+        cd "${{ steps.create-worktree.outputs.worktree-path }}"
 
         echo "Configuring gitsign for signed commits..."
 
         # Configure git to use gitsign
         git config --local commit.gpgsign true
         git config --local gpg.format x509
-        git config --local gpg.x509.program ${RUNNER_TEMP}/bin/gitsign
+        git config --local gpg.x509.program "${{ steps.install-gitsign.outputs.gitsign-path }}"
 
         echo "✓ Gitsign configured"
 
@@ -118,10 +166,13 @@ runs:
         git config --local --get-regexp 'commit\.gpgsign|gpg\.'
 
     - name: Set git user configuration
-      id: configure_user
+      id: configure-user
+      if: |
+        steps.validate-gitsign.outcome == 'success' &&
+        steps.create-worktree.outcome == 'success'
       shell: bash
       run: |
-        cd "${{ steps.create_worktree.outputs.worktree_path }}"
+        cd "${{ steps.create-worktree.outputs.worktree-path }}"
 
         echo "Setting git user configuration..."
 
@@ -133,14 +184,76 @@ runs:
         echo "  Name:  ${{ inputs.user-name }}"
         echo "  Email: ${{ inputs.user-email }}"
 
+    - name: Set final status
+      id: set-final-status
+      if: always()
+      shell: bash
+      run: |
+        # Collect step outcomes
+        INSTALL_OUTCOME="${{ steps.install-gitsign.outcome }}"
+        VALIDATE_GITSIGN_OUTCOME="${{ steps.validate-gitsign.outcome }}"
+        VALIDATE_DIRECTORY_OUTCOME="${{ steps.validate-directory.outcome }}"
+        CREATE_WORKTREE_OUTCOME="${{ steps.create-worktree.outcome }}"
+        CONFIGURE_GITSIGN_OUTCOME="${{ steps.configure-gitsign.outcome }}"
+        CONFIGURE_USER_OUTCOME="${{ steps.configure-user.outcome }}"
+
+        # Default to success
+        FINAL_STATUS="success"
+        FINAL_MESSAGE="Worktree setup completed successfully with gitsign configuration"
+
+        # Check for failures (priority: error > skipped > warning > success)
+        if [ "$INSTALL_OUTCOME" = "failure" ]; then
+          FINAL_STATUS="error"
+          FINAL_MESSAGE="Gitsign installation failed"
+        elif [ "$VALIDATE_OUTCOME" = "failure" ]; then
+          FINAL_STATUS="error"
+          FINAL_MESSAGE="Gitsign validation failed (includes output contract check)"
+        elif [ "$VALIDATE_GITSIGN_OUTCOME" = "skipped" ]; then
+          FINAL_STATUS="skipped"
+          FINAL_MESSAGE="Gitsign validation skipped due to installation failure"
+        elif [ "$VALIDATE_DIRECTORY_OUTCOME" = "failure" ]; then
+          FINAL_STATUS="error"
+          FINAL_MESSAGE="Worktree directory validation failed"
+        elif [ "$VALIDATE_DIRECTORY_OUTCOME" = "skipped" ]; then
+          FINAL_STATUS="skipped"
+          FINAL_MESSAGE="Worktree directory validation skipped due to previous failures"
+        elif [ "$CREATE_WORKTREE_OUTCOME" = "failure" ]; then
+          FINAL_STATUS="error"
+          FINAL_MESSAGE="Worktree creation failed"
+        elif [ "$WORKTREE_OUTCOME" = "skipped" ]; then
+          FINAL_STATUS="skipped"
+          FINAL_MESSAGE="Worktree creation skipped due to validation errors"
+        elif [ "$CONFIGURE_GITSIGN_OUTCOME" = "failure" ]; then
+          FINAL_STATUS="error"
+          FINAL_MESSAGE="Gitsign configuration in worktree failed"
+        elif [ "$CONFIGURE_GITSIGN_OUTCOME" = "skipped" ]; then
+          FINAL_STATUS="skipped"
+          FINAL_MESSAGE="Gitsign configuration skipped due to previous failures"
+        elif [ "$CONFIGURE_USER_OUTCOME" = "failure" ]; then
+          FINAL_STATUS="error"
+          FINAL_MESSAGE="Git user configuration failed"
+        elif [ "$CONFIGURE_USER_OUTCOME" = "skipped" ]; then
+          FINAL_STATUS="skipped"
+          FINAL_MESSAGE="Git user configuration skipped due to previous failures"
+        fi
+
+        # Set outputs
+        echo "status=$FINAL_STATUS" >> $GITHUB_OUTPUT
+        echo "message=$FINAL_MESSAGE" >> $GITHUB_OUTPUT
+
     - name: Output validation results
+      if: |
+        steps.install-gitsign.outcome == 'success' &&
+        steps.create-worktree.outcome == 'success' &&
+        steps.configure-gitsign.outcome == 'success'
       shell: bash
       run: |
         echo ""
         echo "=== Worktree Initialization Complete ==="
-        echo "Worktree Path: ${{ steps.create_worktree.outputs.worktree_path }}"
+        echo "Worktree Path: ${{ steps.create-worktree.outputs.worktree-path }}"
         echo "Branch: ${{ inputs.branch-name }}"
-        echo "Gitsign Version: $( gitsign --version )"
-        echo "Validation Status: ${{ steps.validate_gitsign.outputs.status }}"
+        echo "Gitsign Version: $( "${{ steps.install-gitsign.outputs.gitsign-path }}" --version | head -1)"
+        echo "Setup Status: ${{ steps.set-final-status.outputs.status }}"
+        echo "Message: ${{ steps.set-final-status.outputs.message }}"
         echo ""
         echo "Ready for signed commits using Sigstore keyless signing"

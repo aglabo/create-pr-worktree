@@ -32,23 +32,31 @@ inputs:
 outputs:
   validation-status:
     description: "Overall validation status (ok, fail, error, warning)"
-    value: ${{ steps.validate_branches.outputs.status }}
+    value: ${{ steps.validate-branches.outputs.status }}
   validation-message:
     description: "Validation status message (if any)"
-    value: ${{ steps.validate_branches.outputs.message }}
+    value: ${{ steps.validate-branches.outputs.message }}
   pr-number:
-    description: "Created/updated PR number"
-    value: ${{ steps.create_pr.outputs.pr_number }}
+    description: "Created/updated PR number (empty if validation failed)"
+    value: ${{ steps.create-pr.outputs.pr-number }}
   pr-url:
-    description: "Pull request URL"
-    value: ${{ steps.create_pr.outputs.pr_url }}
+    description: "Pull request URL (empty if validation failed)"
+    value: ${{ steps.create-pr.outputs.pr-url }}
   pr-operation:
-    description: "Operation performed (created, updated, none)"
-    value: ${{ steps.create_pr.outputs.operation }}
+    description: "Operation performed (created, updated, update-failed, or empty if validation failed)"
+    value: ${{ steps.create-pr.outputs.operation }}
+  automerge-status:
+    description: "Auto-merge status (enabled, failed, timeout, or skipped if merge-method=never)"
+    value: ${{ steps.enable-automerge.outputs.automerge-status }}
 
 runs:
   using: composite
   steps:
+    #    - name: Validate runner environment
+    #      id: validate-environment
+    #      uses: aglabo/.github/.github/actions/validate-environment@r1.2.0
+    #      with:
+    #        additional-apps: "gh|gh|regex:version ([0-9.]+)|2.0"
     - name: Detect base branch
       id: detect
       shell: bash
@@ -59,8 +67,6 @@ runs:
         if [ -z "$BASE_BRANCH" ]; then
           echo "::error::Failed to detect base branch (current branch)"
           echo "::error::Ensure action is run on a checked-out branch (not detached HEAD)"
-          echo "status=error" >> $GITHUB_OUTPUT
-          echo "message=Failed to detect current branch" >> $GITHUB_OUTPUT
           exit 1
         fi
 
@@ -68,242 +74,238 @@ runs:
         echo "base-branch=$BASE_BRANCH" >> $GITHUB_OUTPUT
         echo "status=ok" >> $GITHUB_OUTPUT
 
-    - name: Validate environment
-      id: validate_environ
+    - name: Validate API rate limit
+      id: validate-ratelimit
+      if: steps.detect.outcome == 'success'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
-      run: |
-        OUTPUT=$(bash ${{ github.action_path }}/scripts/validate-environ.sh)
-        echo "$OUTPUT"
-
-        # Extract EXIT_STATUS line
-        STATUS_LINE=$(echo "$OUTPUT" | grep "^EXIT_STATUS=" | head -1)
-
-        # Extract status (ok|fail|error|warning)
-        STATUS=$(echo "$STATUS_LINE" | cut -d= -f2 | cut -d: -f1)
-        echo "status=$STATUS" >> $GITHUB_OUTPUT
-
-        # Extract message
-        MESSAGE=$(echo "$STATUS_LINE" | cut -d= -f2 | cut -d: -f2-)
-        echo "message=$MESSAGE" >> $GITHUB_OUTPUT
+      run: bash ${{ github.action_path }}/scripts/validate-ratelimit.sh
 
     - name: Validate branches
-      id: validate_branches
-      if: steps.detect.outputs.status == 'ok'
+      id: validate-branches
+      if: |
+        steps.detect.outcome == 'success' &&
+        steps.validate-ratelimit.outputs.status == 'ok'
       shell: bash
       run: |
-        OUTPUT=$(bash ${{ github.action_path }}/scripts/validate-branches.sh \
+        bash ${{ github.action_path }}/scripts/validate-branches.sh \
           "${{ steps.detect.outputs.base-branch }}" \
-          "${{ inputs.pr-branch }}")
-        echo "$OUTPUT"
-
-        # Extract EXIT_STATUS
-        STATUS_LINE=$(echo "$OUTPUT" | grep "^EXIT_STATUS=" | head -1)
-        STATUS=$(echo "$STATUS_LINE" | cut -d= -f2 | cut -d: -f1)
-        echo "status=$STATUS" >> $GITHUB_OUTPUT
-
-        MESSAGE=$(echo "$STATUS_LINE" | cut -d= -f2 | cut -d: -f2-)
-        echo "message=$MESSAGE" >> $GITHUB_OUTPUT
+          "${{ inputs.pr-branch }}"
 
     - name: Create or update Pull Request
-      id: create_pr
+      id: create-pr
       if: |
-        steps.detect.outputs.status == 'ok' &&
-        steps.validate_environ.outputs.status == 'ok' &&
-        steps.validate_branches.outputs.status == 'ok'
+        steps.detect.outcome == 'success' &&
+        steps.validate-ratelimit.outputs.status == 'ok' &&
+        steps.validate-branches.outputs.status == 'ok'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        BASE_BRANCH="${{ steps.detect.outputs.base-branch }}"
-        PR_BRANCH="${{ inputs.pr-branch }}"
+        bash ${{ github.action_path }}/scripts/create-pr.sh \
+          "${{ steps.detect.outputs.base-branch }}" \
+          "${{ inputs.pr-branch }}" \
+          "${{ inputs.pr-title }}" \
+          "${{ inputs.pr-body }}"
 
-        # add user signature for commit
-        #git config --local user.name "github-actions[bot]"
-        #git config --local user.email "github-actions[bot]@users.noreply.github.com"
+    - name: Validate create-pr ABI contract
+      if: steps.create-pr.outcome == 'success'
+      shell: bash
+      run: |
+        # ABI CONTRACT ENFORCEMENT: create-pr.sh MUST output pr-number, pr-url, operation
+        # This is a boundary check - fail immediately if contract is violated
 
-        # Check if PR already exists from head branch to base branch
-        # Timeout after 30 seconds
-        if ! EXISTING_PR=$(timeout 30s gh pr list --head "$PR_BRANCH" --base "$BASE_BRANCH" --json number --jq '.[0].number' 2>&1); then
-          EXIT_CODE=$?
-          if [ $EXIT_CODE -eq 124 ]; then
-            echo "::error::GitHub API call (gh pr list) timed out after 30 seconds"
-          else
-            echo "::warning::Failed to check existing PR, assuming none exists"
-          fi
-          EXISTING_PR=""
+        PR_NUMBER="${{ steps.create-pr.outputs.pr-number }}"
+        PR_URL="${{ steps.create-pr.outputs.pr-url }}"
+        OPERATION="${{ steps.create-pr.outputs.operation }}"
+
+        if [ -z "$PR_NUMBER" ]; then
+          echo "::error::ABI contract violation: create-pr.sh did not set pr-number output"
+          echo "::error::This indicates a bug in create-pr.sh implementation"
+          exit 1
         fi
 
-        if [ -n "$EXISTING_PR" ]; then
-          echo "PR #$EXISTING_PR already exists, updating title and body"
-          mkdir -p ${RUNNER_TEMP}/temp
-          printf '%s\n' "${{ inputs.pr-body }}" > ${RUNNER_TEMP}/temp/pr_body.txt
-
-          # Update PR title and body with timeout
-          if ! timeout 30s gh pr edit "$EXISTING_PR" \
-            --title "${{ inputs.pr-title }}" \
-            --body-file ${RUNNER_TEMP}/temp/pr_body.txt 2>&1; then
-            EXIT_CODE=$?
-            if [ $EXIT_CODE -eq 124 ]; then
-              echo "::error::GitHub API call (gh pr edit) timed out after 30 seconds"
-            else
-              echo "::warning::Failed to update PR title/body, continuing anyway"
-            fi
-          fi
-
-          # Mark as update operation
-          OPERATION="updated"
-        else
-          echo "Creating new Pull Request"
-          mkdir -p ${RUNNER_TEMP}/temp
-          printf '%s\n' "${{ inputs.pr-body }}" > ${RUNNER_TEMP}/temp/pr_body.txt
-          # Create PR with timeout (60 seconds for creation)
-          if ! timeout 60s gh pr create \
-            --base "$BASE_BRANCH" \
-            --head "$PR_BRANCH" \
-            --title "${{ inputs.pr-title }}" \
-            --body-file ${RUNNER_TEMP}/temp/pr_body.txt 2>&1; then
-            EXIT_CODE=$?
-            if [ $EXIT_CODE -eq 124 ]; then
-              echo "::error::GitHub API call (gh pr create) timed out after 60 seconds"
-            else
-              echo "::error::Failed to create PR"
-            fi
-            exit $EXIT_CODE
-          fi
-
-          # Mark as create operation
-          OPERATION="created"
+        if [ -z "$PR_URL" ]; then
+          echo "::error::ABI contract violation: create-pr.sh did not set pr-url output"
+          echo "::error::This indicates a bug in create-pr.sh implementation"
+          exit 1
         fi
 
-        # Common output handling after PR creation/update
-        # Validate operation is set
         if [ -z "$OPERATION" ]; then
-          echo "::error::Failed to determine operation type"
+          echo "::error::ABI contract violation: create-pr.sh did not set operation output"
+          echo "::error::This indicates a bug in create-pr.sh implementation"
           exit 1
         fi
 
-        # Get PR information from repository (unified for both create and update)
-        if ! PR_JSON=$(timeout 30s gh pr list --head "$PR_BRANCH" --base "$BASE_BRANCH" --json number,url --jq '.[0]' 2>&1); then
-          EXIT_CODE=$?
-          if [ $EXIT_CODE -eq 124 ]; then
-            echo "::error::GitHub API call (gh pr list) timed out after 30 seconds"
-          else
-            echo "::error::Failed to get PR information: $PR_JSON"
-          fi
-          exit $EXIT_CODE
-        fi
-
-        # Validate PR was found
-        if [ -z "$PR_JSON" ] || [ "$PR_JSON" = "null" ]; then
-          echo "::error::No PR found for branch $PR_BRANCH -> $BASE_BRANCH"
-          exit 1
-        fi
-
-        # Extract number and URL from JSON
-        PR_NUMBER=$(jq -r '.number' <<< "$PR_JSON")
-        PR_URL=$(jq -r '.url' <<< "$PR_JSON")
-
-        # Validate extracted values
-        if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "null" ]; then
-          echo "::error::Failed to extract PR number from response"
-          exit 1
-        fi
-
-        if [ -z "$PR_URL" ] || [ "$PR_URL" = "null" ]; then
-          echo "::error::Failed to extract PR URL from response"
-          exit 1
-        fi
-
-        # Set all outputs in one place
-        echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
-        echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
-        echo "operation=$OPERATION" >> "$GITHUB_OUTPUT"
-
-        # Display unified success message
+        # Validate operation is one of the expected values
         case "$OPERATION" in
-          updated)
-            echo "✓ Updated PR #$PR_NUMBER: $PR_URL"
-            ;;
-          created)
-            echo "✓ Created PR #$PR_NUMBER: $PR_URL"
-            ;;
+          created|updated|update-failed) ;;
           *)
-            echo "::warning::Unknown operation: $OPERATION"
+            echo "::error::ABI contract violation: invalid operation value: $OPERATION"
+            echo "::error::Expected: created, updated, or update-failed"
+            exit 1
             ;;
         esac
 
+        echo "✓ ABI contract validated: pr-number=$PR_NUMBER, operation=$OPERATION"
+
     - name: Set PR labels
-      id: set_labels
+      id: set-labels
       if: |
-        steps.detect.outputs.status == 'ok' &&
-        steps.validate_environ.outputs.status == 'ok' &&
-        steps.validate_branches.outputs.status == 'ok'
+        steps.detect.outcome == 'success' &&
+        steps.validate-ratelimit.outputs.status == 'ok' &&
+        steps.validate-branches.outputs.status == 'ok' &&
+        inputs.labels != ''
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        PR_NUMBER="${{ steps.create_pr.outputs.pr_number }}"
+        PR_NUMBER="${{ steps.create-pr.outputs.pr-number }}"
+        LABELS="${{ inputs.labels }}"
 
-        # Add labels if provided
-        if [ -n "${{ inputs.labels }}" ]; then
-          # Split labels by comma and create/add each one
-          IFS=',' read -ra LABEL_ARRAY <<< "${{ inputs.labels }}"
+        # Get existing labels in the repository
+        echo "Checking existing labels in repository..."
+        EXISTING_LABELS=$(timeout 30s gh label list --json name --jq '.[].name' 2>&1 || echo "")
 
-          for label in "${LABEL_ARRAY[@]}"; do
-            # Trim whitespace
-            label=$(echo "$label" | xargs)
+        # Split labels by comma and process each one
+        IFS=',' read -ra LABEL_ARRAY <<< "$LABELS"
+        LABELS_TO_ADD=""
+        LABELS_CREATED=0
+        LABELS_SKIPPED=0
 
-            # Create label if it doesn't exist (using default colors)
-            # Timeout after 30 seconds
-            if ! timeout 30s gh label create "$label" --force 2>&1; then
+        for label in "${LABEL_ARRAY[@]}"; do
+          # Trim whitespace
+          label=$(echo "$label" | xargs)
+
+          # Check if label already exists
+          if echo "$EXISTING_LABELS" | grep -Fxq "$label"; then
+            echo "  Label '$label' already exists"
+            LABELS_TO_ADD="${LABELS_TO_ADD}${label},"
+          else
+            # Try to create label (may fail due to permissions)
+            echo "  Creating label '$label'..."
+            if timeout 30s gh label create "$label" --force 2>&1; then
+              echo "  ✓ Label '$label' created"
+              LABELS_CREATED=$((LABELS_CREATED + 1))
+              LABELS_TO_ADD="${LABELS_TO_ADD}${label},"
+            else
               EXIT_CODE=$?
               if [ $EXIT_CODE -eq 124 ]; then
-                echo "::warning::GitHub API call (gh label create) timed out for label: $label"
+                echo "  ::warning::Timeout creating label '$label' (skipped)"
+              else
+                echo "  ::warning::Failed to create label '$label' (insufficient permissions or other error)"
+                echo "  ::warning::This label will be skipped. Ensure 'contents: write' permission is granted."
               fi
-              # Continue even if label creation fails
-            fi
-          done
-
-          # Add all labels to the PR with timeout
-          if ! timeout 60s gh pr edit "$PR_NUMBER" --add-label "${{ inputs.labels }}" 2>&1; then
-            EXIT_CODE=$?
-            if [ $EXIT_CODE -eq 124 ]; then
-              echo "::error::GitHub API call (gh pr edit) timed out after 60 seconds"
-              exit 124
-            else
-              echo "::error::Failed to add labels to PR"
-              exit $EXIT_CODE
+              LABELS_SKIPPED=$((LABELS_SKIPPED + 1))
             fi
           fi
-          echo "✓ Added labels: ${{ inputs.labels }}"
+        done
+
+        # Remove trailing comma
+        LABELS_TO_ADD="${LABELS_TO_ADD%,}"
+
+        # Add labels to PR if any are available
+        if [ -n "$LABELS_TO_ADD" ]; then
+          echo "Adding labels to PR: $LABELS_TO_ADD"
+          if timeout 60s gh pr edit "$PR_NUMBER" --add-label "$LABELS_TO_ADD" 2>&1; then
+            echo "✓ Added labels to PR: $LABELS_TO_ADD"
+            if [ $LABELS_CREATED -gt 0 ]; then
+              echo "  ($LABELS_CREATED label(s) created)"
+            fi
+            if [ $LABELS_SKIPPED -gt 0 ]; then
+              echo "  ::warning::$LABELS_SKIPPED label(s) were skipped due to creation failures"
+            fi
+          else
+            EXIT_CODE=$?
+            if [ $EXIT_CODE -eq 124 ]; then
+              echo "::warning::GitHub API call (gh pr edit) timed out after 60 seconds"
+            else
+              echo "::warning::Failed to add labels to PR (this does not affect PR creation)"
+            fi
+          fi
+        else
+          echo "::warning::No labels could be added (all label creations failed)"
+          echo "::warning::Ensure 'contents: write' permission is granted to create labels"
         fi
 
-    - name: Enable auto-merge
-      id: enable_automerge
+    - name: Validate merge-method input
       if: |
-        steps.detect.outputs.status == 'ok' &&
-        steps.validate_environ.outputs.status == 'ok' &&
-        steps.validate_branches.outputs.status == 'ok' &&
+        steps.detect.outcome == 'success' &&
+        steps.validate-ratelimit.outputs.status == 'ok' &&
+        steps.validate-branches.outputs.status == 'ok'
+      shell: bash
+      run: |
+        # INPUT VALIDATION: merge-method must be one of the whitelisted values
+        # This prevents typos from being silently converted to API errors
+        MERGE_METHOD="${{ inputs.merge-method }}"
+
+        case "$MERGE_METHOD" in
+          merge|squash|rebase|never)
+            echo "✓ Valid merge-method: $MERGE_METHOD"
+            ;;
+          *)
+            echo "::error::Invalid merge-method: $MERGE_METHOD"
+            echo "::error::Allowed values: merge, squash, rebase, never"
+            exit 1
+            ;;
+        esac
+
+    - name: Enable auto-merge
+      id: enable-automerge
+      if: |
+        steps.detect.outcome == 'success' &&
+        steps.validate-ratelimit.outputs.status == 'ok' &&
+        steps.validate-branches.outputs.status == 'ok' &&
         inputs.merge-method != 'never'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        PR_NUMBER="${{ steps.create_pr.outputs.pr_number }}"
+        PR_NUMBER="${{ steps.create-pr.outputs.pr-number }}"
 
         # Enable auto-merge with specified method
         # Timeout after 60 seconds
+        # NOTE: Auto-merge failure is treated as warning, not error
+        # PR creation has already succeeded at this point
         if ! timeout 60s gh pr merge "$PR_NUMBER" --auto --${{ inputs.merge-method }} 2>&1; then
           EXIT_CODE=$?
           if [ $EXIT_CODE -eq 124 ]; then
-            echo "::error::GitHub API call (gh pr merge) timed out after 60 seconds"
+            echo "::warning::GitHub API call (gh pr merge) timed out after 60 seconds"
+            echo "automerge-status=timeout" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::Failed to enable auto-merge"
+            echo "::warning::Failed to enable auto-merge (check repository settings and permissions)"
+            echo "automerge-status=failed" >> "$GITHUB_OUTPUT"
           fi
-          exit $EXIT_CODE
+          exit 0  # Do not fail the action - PR was created successfully
         fi
-        echo "✓ Enabled auto-merge (${{ inputs.merge-method }})"
 
+        echo "✓ Enabled auto-merge (${{ inputs.merge-method }})"
+        echo "automerge-status=enabled" >> "$GITHUB_OUTPUT"
         echo "Note: PR will auto-merge once all required checks pass and approvals are received"
+
+    - name: Validate action outputs (final sanity check)
+      if: always()
+      shell: bash
+      run: |
+        # FINAL SANITY CHECK: Validate that outputs are consistent with validation status
+        # Note: This is a post-execution diagnostic, not a boundary check
+        # Boundary checks happen immediately after each critical step (see ABI contract validation)
+
+        VALIDATION_STATUS="${{ steps.validate-branches.outputs.status }}"
+        PR_NUMBER="${{ steps.create-pr.outputs.pr-number }}"
+
+        # If validation passed but PR was not created, this is an internal error
+        if [ "$VALIDATION_STATUS" = "ok" ] && [ -z "$PR_NUMBER" ]; then
+          echo "::error::Internal error: Validation passed but PR was not created"
+          echo "::error::This indicates a bug in the action logic"
+          echo "::error::(This should have been caught by ABI contract validation)"
+          exit 1
+        fi
+
+        # If validation failed, PR number should be empty (expected)
+        if [ "$VALIDATION_STATUS" != "ok" ] && [ -n "$PR_NUMBER" ]; then
+          echo "::warning::Unexpected state: Validation failed but PR number is set"
+        fi
+
+        echo "✓ Final sanity check passed"

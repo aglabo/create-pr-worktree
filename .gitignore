@@ -41,6 +41,11 @@ $~*
 .env*
 .env.*
 
+## development tools
+# tools dir
+.tools/
+
+
 ## AI generated files
 
 ## Coding AI depended

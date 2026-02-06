@@ -34,7 +34,8 @@ main() {
   echo "Local development environment detected. "
   # Setup for local development environment
   lefthook install
-  # remember bd hooks must set Git config set: core.hooksPath=.beads-hooks
+  # Note: If using beads hooks, set Git config: core.hooksPath=.beads-hooks
+  # (Commented out - lefthook is the active hook manager for this project)
   # bd hooks install --chain  --shared --no-daemon
 
 }
