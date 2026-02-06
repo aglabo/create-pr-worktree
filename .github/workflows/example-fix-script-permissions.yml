@@ -1,0 +1,92 @@
+name: Example - Fix Script Permissions
+
+# NOTE:
+# This workflow is an example usage of reusable-fix-script-permissions.yml.
+# Adjust triggers, branch selection, and patterns for your project.
+#
+# Example Workflow Configuration
+# - Trigger: Push to main or feature branches when .sh files change
+# - Purpose: Demonstrate usage of reusable-fix-script-permissions workflow
+# - Pattern: Caller workflow that invokes reusable workflow and displays results
+
+on:
+  push:
+    branches:
+      - main
+      - "feat-*/**"
+      - "fix-*/**"
+      - "refactor-*/**"
+    paths:
+      - "**.sh" # Only trigger when shell scripts change
+  workflow_dispatch: # Allow manual trigger for testing
+
+permissions:
+  contents: write # Required for worktree operations in reusable workflow
+  pull-requests: write # Required for PR creation in reusable workflow
+  id-token: write # Required for gitsign keyless signing in reusable workflow
+
+jobs:
+  fix-permissions:
+    name: Fix Script Permissions
+    # NOTE: This example checks out the current branch explicitly.
+    # The reusable workflow will create a PR that merges INTO this branch.
+    # See CONTRACT section in reusable-fix-script-permissions.yml for details.
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    uses: aglabo/create-pr-worktree/.github/workflows/reusable-fix-script-permissions.yml@v0.1.0
+    with:
+      files-pattern: "**/*.sh"
+      files-ignore-pattern: "node_modules/**\n.git/**\nvendor/**"
+      pr-branch-prefix: "fix-permissions"
+
+  display-results:
+    name: Display Results
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    needs: fix-permissions
+    if: always()
+    steps:
+      - name: Display workflow results
+        run: |
+          echo "========================================="
+          echo "Fix Script Permissions - Results"
+          echo "========================================="
+          echo ""
+          echo "Status: ${{ needs.fix-permissions.outputs.status }}"
+          echo "Fixed count: ${{ needs.fix-permissions.outputs.fixed-count || '0' }}"
+
+          if [ "${{ needs.fix-permissions.outputs.scripts }}" != "" ]; then
+            echo ""
+            echo "Fixed scripts:"
+            echo "${{ needs.fix-permissions.outputs.scripts }}" | while IFS= read -r script; do
+              [ -n "$script" ] && echo "  - $script"
+            done
+          fi
+
+          if [ "${{ needs.fix-permissions.outputs.pr-url }}" != "" ]; then
+            echo ""
+            echo "PR URL: ${{ needs.fix-permissions.outputs.pr-url }}"
+            echo "PR Number: #${{ needs.fix-permissions.outputs.pr-number }}"
+          fi
+
+          echo ""
+          case "${{ needs.fix-permissions.outputs.status }}" in
+            "success")
+              echo "[SUCCESS] Permissions fixed successfully and PR created"
+              ;;
+            "skipped")
+              echo "[INFO] No permissions needed fixing"
+              ;;
+            "error")
+              echo "[ERROR] Workflow failed - check logs for details"
+              exit 1
+              ;;
+            *)
+              echo "[WARNING] Unknown status"
+              exit 1
+              ;;
+          esac

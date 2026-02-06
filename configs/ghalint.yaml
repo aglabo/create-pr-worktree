@@ -42,3 +42,39 @@ excludes:
     workflow_file_path: .github/workflows/test-create-pr.yml
     job_name: test-action
     step_id: checkout
+
+  # fix-script-permissions.yml - Allow create-pr-worktree actions to use tag refs
+  # Reason: Internal project actions using semantic versioning tags for stability
+  - policy_name: action_ref_should_be_full_length_commit_sha
+    workflow_file_path: .github/workflows/reusable-fix-script-permissions.yml
+    job_name: validate-permissions
+    step_id: setup
+    action_name: aglabo/create-pr-worktree/.github/actions/pr-worktree-setup
+
+  - policy_name: action_ref_should_be_full_length_commit_sha
+    workflow_file_path: .github/workflows/reusable-fix-script-permissions.yml
+    job_name: validate-permissions
+    step_id: create-pr
+    action_name: aglabo/create-pr-worktree/.github/actions/create-pr-from-worktree
+
+  - policy_name: action_ref_should_be_full_length_commit_sha
+    workflow_file_path: .github/workflows/reusable-fix-script-permissions.yml
+    job_name: validate-permissions
+    action_name: aglabo/create-pr-worktree/.github/actions/pr-worktree-cleanup
+
+  # Allow persist-credentials: true for worktree operations requiring git push
+  - policy_name: checkout_persist_credentials_should_be_false
+    workflow_file_path: .github/workflows/reusable-fix-script-permissions.yml
+    job_name: validate-permissions
+
+  # reusable-fix-script-permissions.yml - Allow persist-credentials for worktree operations
+  - policy_name: checkout_persist_credentials_should_be_false
+    workflow_file_path: .github/workflows/reusable-fix-script-permissions.yml
+    job_name: validate-permissions
+
+  # example-fix-script-permissions.yml - Allow reusable workflow to use tag refs
+  # Reason: Reusable workflows use semantic versioning tags for stability
+  - policy_name: action_ref_should_be_full_length_commit_sha
+    workflow_file_path: .github/workflows/example-fix-script-permissions.yml
+    job_name: fix-permissions
+    action_name: aglabo/create-pr-worktree/.github/workflows/reusable-fix-script-permissions.yml

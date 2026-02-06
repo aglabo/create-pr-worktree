@@ -1,0 +1,364 @@
+name: Reusable Fix Script Permissions
+
+# Reusable Workflow Configuration
+# - Trigger: workflow_call (called from other workflows)
+# - Purpose: Automatically detect and fix shell scripts missing execute permissions
+# - Security: Minimal permissions (contents:write, pull-requests:write, id-token:write)
+# - Pattern: Reusable workflow for worktree + gitsign + PR automation
+#
+# CONTRACT (Caller Requirements):
+# 1. This workflow assumes a branch checkout (not detached HEAD)
+# 2. current_branch represents the PR base candidate (merge target)
+# 3. The caller is responsible for deciding how to use current_branch
+# 4. Detached HEAD will cause immediate failure with clear error message
+# 5. Workflow behavior is deterministic across reruns/retries (using github.run_id)
+
+on:
+  workflow_call:
+    inputs:
+      files-pattern:
+        description: "File search pattern for shell scripts"
+        required: false
+        default: "**/*.sh"
+        type: string
+      files-ignore-pattern:
+        description: "Files to ignore (newline-separated patterns)"
+        required: false
+        default: "node_modules/**\n.git/**\nvendor/**"
+        type: string
+      pr-branch-prefix:
+        description: "Branch name prefix for PR"
+        required: false
+        default: "fix-permissions"
+        type: string
+    outputs:
+      status:
+        description: "Overall workflow status (success, skipped, error)"
+        value: ${{ jobs.validate-permissions.outputs.status }}
+      pr-url:
+        description: "URL of created/updated pull request (empty if skipped)"
+        value: ${{ jobs.validate-permissions.outputs.pr-url }}
+      pr-number:
+        description: "Number of created/updated pull request (empty if skipped)"
+        value: ${{ jobs.validate-permissions.outputs.pr-number }}
+      fixed-count:
+        description: "Number of files that had permissions fixed"
+        value: ${{ jobs.validate-permissions.outputs.fixed-count }}
+      scripts:
+        description: "List of scripts that had permissions fixed (newline-separated)"
+        value: ${{ jobs.validate-permissions.outputs.scripts }}
+
+permissions:
+  contents: write # For worktree operations
+  pull-requests: write # For PR creation
+  id-token: write # For gitsign keyless signing
+
+# Workflow-level defaults
+defaults:
+  run:
+    shell: bash # Ensure consistent shell across all steps
+
+jobs:
+  validate-permissions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      status: ${{ steps.set-status.outputs.status }}
+      pr-url: ${{ steps.create-pr.outputs.pr-url }}
+      pr-number: ${{ steps.create-pr.outputs.pr-number }}
+      fixed-count: ${{ steps.filter.outputs.count }}
+      scripts: ${{ steps.filter.outputs.scripts }}
+
+    # Job-level environment variables
+
+    steps:
+      # ============================================
+      # Environment Validation
+      # Purpose: Verify runner meets requirements (architecture, required tools: gh, jq)
+      # ============================================
+      - name: Validate runner environment and required tools
+        id: validate-env
+        uses: aglabo/.github/.github/actions/validate-environment@2d0d5b6168a6a93547aaa309b7237cd39e3fe5e7 # r1.2.0
+        with:
+          architecture: amd64 # Expected runner architecture
+          additional-apps:
+            "gh|gh (Github CLI)|regex:version ([0-9.]+)|2.0  jq|jq||"
+
+      # ============================================
+      # Repository Checkout
+      # Purpose: Clone repository with full history for changed-files detection
+      # ============================================
+      - name: Checkout repository with full history
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0 # Full history for changed-files
+          persist-credentials: true # Required for worktree operations and git push
+
+      # ============================================
+      # Branch and Pattern Configuration
+      # Purpose: Configure PR branch name, worktree path, and file search patterns
+      # ============================================
+      - name: Setup branch names and file patterns
+        id: vars
+        run: |
+          # ============================================
+          # Variable Setup Block
+          # ============================================
+          # CONTRACT: This workflow requires a branch checkout (not detached HEAD)
+          # - current_branch represents the PR base candidate (merge target)
+          # - The caller is responsible for ensuring proper branch checkout
+          # - Detached HEAD state will cause immediate failure
+          #
+          # DESIGN: The PR will be created to merge INTO this currently checked-out branch.
+          current_branch=$(git branch --show-current)
+          if [ -z "${current_branch}" ]; then
+             echo "::error::Detached HEAD detected. This reusable workflow requires a branch checkout."
+             echo "::error::Please ensure actions/checkout uses a branch ref, not a commit SHA."
+             echo "status=error" >> "$GITHUB_OUTPUT"
+             exit 1
+          fi
+          echo "Currently on branch: $current_branch (PR target)"
+
+          # Set PR branch name (hierarchical naming for clarity)
+          # FORMAT: {prefix}/{current_branch}
+          # DESIGN: PR branch inherits current branch name for traceability
+          # workflow_dispatch inputs override defaults
+          pr_branch_prefix="${{ inputs.pr-branch-prefix }}" || "fix-permissions"
+          pr_branch="${pr_branch_prefix}/${current_branch}"
+          echo "PR branch will be: $pr_branch"
+
+          # Set file patterns (workflow_dispatch inputs override defaults)
+          files_pattern="${{ inputs.files-pattern }}"
+          if [ -z "$files_pattern" ]; then
+            files_pattern="**/*.sh"
+          fi
+
+          files_ignore_pattern="${{ inputs.files-ignore-pattern }}"
+          if [ -z "$files_ignore_pattern" ]; then
+            files_ignore_pattern=$'node_modules/**\n.git/**\nvendor/**'
+          fi
+
+          # Set worktree directory (hierarchical structure matching PR branch)
+          # FORMAT: worktree/{prefix}/{current_branch}
+          # DESIGN: Directory structure mirrors branch hierarchy for clarity
+          worktree_dir="worktree/${pr_branch}"
+
+          # ============================================
+          # GITHUB_OUTPUT Block
+          # ============================================
+          {
+            echo "current-branch=$current_branch"
+            echo "pr-branch=$pr_branch"
+            echo "files-pattern=$files_pattern"
+            echo "files-ignore-pattern<<EOF"
+            echo "$files_ignore_pattern"
+            echo "EOF"
+            echo "worktree-dir=$worktree_dir"
+          } >> "$GITHUB_OUTPUT"
+
+          # ============================================
+          # Display Block
+          # ============================================
+          echo "Wkflow Configuration:"
+          echo "  - Current branch: $current_branch"
+          echo "  - PR branch: $pr_branch"
+          echo "  - Files pattern: $files_pattern"
+          echo "  - Ignore pattern: ${files_ignore_pattern//$'\n'/, }"
+          echo "  - Worktree directory: $worktree_dir"
+
+      # ============================================
+      # Shell Script Detection
+      # Purpose: Identify shell scripts modified in current commit/push
+      # ============================================
+      - name: Detect changed shell scripts using tj-actions/changed-files
+        id: changed-scripts
+        uses: tj-actions/changed-files@e0021407031f5be11a464abee9a0776171c79891 # v47.0.1 - CVE-2025-30066 patched
+        with:
+          files: ${{ steps.vars.outputs.files-pattern }}
+          files_ignore: ${{ steps.vars.outputs.files-ignore-pattern }}
+          separator: "\n"
+
+      # ============================================
+      # Permission Filtering
+      # Purpose: Check git index mode (100644 vs 100755) to find scripts needing +x
+      # ============================================
+      - name: Filter scripts missing execute permission from git index
+        id: filter
+        if: steps.changed-scripts.outputs.any_changed == 'true'
+        run: |
+          changed_files="${{ steps.changed-scripts.outputs.all_changed_files }}"
+
+          scripts_without_exec=""
+          total_missing_perms=0
+
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+
+            # Check if file has shebang
+            if [ ! -f "$file" ]; then
+              echo "::warning::File not found: $file (skipped)"
+              continue
+            fi
+
+            first_line=$(head -n 1 "$file" 2>/dev/null)
+            if [[ ! "$first_line" =~ ^#! ]]; then
+              continue
+            fi
+
+            # Get git index mode (100644 = normal, 100755 = executable)
+            mode=$(git ls-files --stage "$file" 2>/dev/null | awk '{print $1}')
+
+            if [ -z "$mode" ]; then
+              echo "::warning::File not in git index: $file (skipped)"
+              continue
+            fi
+
+            if [ "$mode" = "100644" ]; then
+              scripts_without_exec="${scripts_without_exec}${file}\n"
+              total_missing_perms=$((total_missing_perms + 1))
+            elif [ "$mode" != "100755" ]; then
+              echo "::warning::Unexpected mode for $file: $mode"
+            fi
+          done <<< "$changed_files"
+
+          # Handle no-work case
+          if [ "$total_missing_perms" -eq 0 ]; then
+            echo "::notice::All changed shell scripts with shebang already have execute permission"
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Display files that need permission fix
+          echo "Files needing execute permission ($total_missing_perms):"
+          echo -e "$scripts_without_exec"
+
+          # Output results
+          {
+            echo "status=success"
+            echo "count=$total_missing_perms"
+            echo "scripts<<EOF"
+            echo -e "$scripts_without_exec"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ============================================
+      # Worktree Setup (pr-worktree-setup action)
+      # Purpose: Create isolated worktree on new branch with gitsign configuration
+      # ============================================
+      - name: Setup isolated worktree using pr-worktree-setup action
+        id: setup
+        if: steps.filter.outcome == 'success'
+        uses: aglabo/create-pr-worktree/.github/actions/pr-worktree-setup@v0.1.0
+        with:
+          branch-name: ${{ steps.vars.outputs.pr-branch }}
+          worktree-dir: ${{ runner.temp }}/${{ steps.vars.outputs.worktree-dir }}
+
+      # ============================================
+      # Permission Application
+      # Purpose: Add execute permission to filtered scripts in worktree
+      # ============================================
+      - name: Apply execute permissions using git update-index
+        id: apply
+        if: steps.filter.outcome == 'success' && steps.setup.outcome == 'success'
+        working-directory: ${{ steps.setup.outputs.worktree-path }}
+        run: |
+          scripts="${{ steps.filter.outputs.scripts }}"
+          applied_count=0
+
+          echo "Applying execute permissions..."
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+
+            if [ ! -f "$file" ]; then
+              echo "::warning::File not found in worktree: $file (skipped)"
+              continue
+            fi
+
+            # Apply permission using git index
+            if git update-index --chmod=+x "$file"; then
+              echo "  áúz?Added +x to: $file"
+              applied_count=$((applied_count + 1))
+            else
+              echo "::error::Failed to add +x to: $file"
+              exit 1
+            fi
+          done <<< "$scripts"
+
+          echo ""
+          echo "Successfully applied execute permission to $applied_count file(s)"
+          echo "applied-count=$applied_count" >> "$GITHUB_OUTPUT"
+
+      # ============================================
+      # Pull Request Creation (create-pr-from-worktree action)
+      # Purpose: Commit changes with gitsign signature and create/update PR
+      # ============================================
+      - name: Create pull request using create-pr-from-worktree action
+        id: create-pr
+        if: steps.apply.outcome == 'success'
+        uses: aglabo/create-pr-worktree/.github/actions/create-pr-from-worktree@v0.1.0
+        with:
+          pr-branch: ${{ steps.vars.outputs.pr-branch }}
+          pr-title: "fix: add execute permissions to changed shell scripts"
+          pr-body: |
+            ## Summary
+            Automatically detected shell scripts in this push that are missing execute permissions.
+
+            ## Changed Files
+            Applied `git update-index --chmod=+x` to the following files:
+            ```
+            ${{ steps.filter.outputs.scripts }}
+            ```
+
+            ## Details
+            - **Changed scripts checked**: ${{ steps.changed-scripts.outputs.all_changed_files_count }}
+            - **Scripts missing permissions**: ${{ steps.filter.outputs.count }}
+            - **Scripts updated**: ${{ steps.apply.outputs.applied-count }}
+            - **Detection method**: tj-actions/changed-files@v47
+            - **Triggered by**: ${{ github.event_name }} on ${{ github.ref_name }}
+            - **Commit SHA**: ${{ github.sha }}
+
+            ## Testing Checklist
+            - [ ] Verify all listed scripts now have execute permission (`git ls-files --stage`)
+            - [ ] Confirm no unintended files were modified
+            - [ ] Check CI/CD passes after merge
+
+            ---
+            Automated PR created by [create-pr-worktree](https://github.com/aglabo/create-pr-worktree)
+
+            **Signed Commits**: All commits are signed with Sigstore keyless signing (gitsign)
+          labels: "fix, automation, permissions"
+          merge-method: squash
+
+      # ============================================
+      # Worktree Cleanup (pr-worktree-cleanup action)
+      # Purpose: Remove worktree directory and prune git references
+      # ============================================
+      - name: Cleanup worktree using pr-worktree-cleanup action
+        if: always()
+        uses: aglabo/create-pr-worktree/.github/actions/pr-worktree-cleanup@v0.1.0
+        with:
+          worktree-dir: ${{ steps.setup.outputs.worktree-path }}
+          force: true
+
+      # ============================================
+      # Final Status Reporting
+      # Purpose: Aggregate step outcomes and set workflow outputs (success/skipped/error)
+      # ============================================
+      - name: Set final workflow status for outputs
+        id: set-status
+        if: always()
+        run: |
+          # Determine overall workflow status based on step outcomes
+          if [ "${{ steps.filter.outputs.status }}" = "skipped" ]; then
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+            echo "Workflow completed: No scripts to fix"
+          elif [ "${{ steps.create-pr.outcome }}" = "success" ]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            echo "Workflow completed: PR created/updated successfully"
+          elif [ "${{ steps.filter.outcome }}" = "failure" ] || [ "${{ steps.apply.outcome }}" = "failure" ]; then
+            echo "status=error" >> "$GITHUB_OUTPUT"
+            echo "::error::Workflow failed during permission fix"
+          else
+            echo "status=error" >> "$GITHUB_OUTPUT"
+            echo "::error::Workflow failed for unknown reason"
+          fi
