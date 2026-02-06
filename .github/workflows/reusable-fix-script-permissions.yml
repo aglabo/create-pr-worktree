@@ -36,6 +36,11 @@ on:
         required: false
         default: ""
         type: string
+      merge-method:
+        description: "Auto-merge method (merge, squash, rebase, never). Use 'never' to disable auto-merge."
+        required: false
+        default: "squash"
+        type: string
 
     outputs:
       status:
@@ -371,7 +376,7 @@ jobs:
 
             **Signed Commits**: All commits are signed with Sigstore keyless signing (gitsign)
           labels: "fix, automation, permissions"
-          merge-method: squash
+          merge-method: ${{ inputs.merge-method }}
 
       # ============================================
       # Worktree Cleanup (pr-worktree-cleanup action)
