@@ -289,7 +289,7 @@ jobs:
 
             # Apply permission using git index
             if git update-index --chmod=+x "$file"; then
-              echo "  áúz?Added +x to: $file"
+              echo " > Added +x to: $file"
               applied_count=$((applied_count + 1))
             else
               echo "::error::Failed to add +x to: $file"
@@ -297,8 +297,36 @@ jobs:
             fi
           done <<< "$scripts"
 
+
           echo ""
           echo "Successfully applied execute permission to $applied_count file(s)"
+
+          # Commit changes
+          echo ""
+          echo "Committing changes..."
+          git add .
+
+          # Build commit message with file list
+          git commit -m "$(cat <<'COMMIT_MSG'
+          fix: add execute permissions to shell scripts
+
+          Applied execute permission to ${applied_count} shell script(s):
+
+          ${scripts}
+
+          Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
+          COMMIT_MSG
+          )"
+
+          # Push to remote
+          echo ""
+          echo "Pushing to remote..."
+          PR_BRANCH="${{ steps.vars.outputs.pr-branch }}"
+          git push -u origin "HEAD:${PR_BRANCH}"
+
+          echo ""
+          echo "✓ Changes committed and pushed to branch: ${PR_BRANCH}"
+
           echo "applied-count=$applied_count" >> "$GITHUB_OUTPUT"
 
       # ============================================
