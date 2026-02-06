@@ -156,6 +156,7 @@ jobs:
           # FORMAT: worktree/{sanitized_pr_branch}
           # DESIGN: Replace slashes with hyphens to avoid deep directory hierarchies
           sanitized_pr_branch="${pr_branch//\//-}"
+          mkdir -p "${RUNNER_TEMP}/.worktree"
           worktree_dir=".worktree/${sanitized_pr_branch}"
 
           # ============================================
