@@ -147,10 +147,12 @@ jobs:
             files_ignore_pattern=$'node_modules/**\n.git/**\nvendor/**'
           fi
 
-          # Set worktree directory (hierarchical structure matching PR branch)
-          # FORMAT: worktree/{prefix}/{current_branch}
-          # DESIGN: Directory structure mirrors branch hierarchy for clarity
-          worktree_dir="worktree/${pr_branch}"
+          # Set worktree directory (flat structure with sanitized branch name)
+          # FORMAT: worktree/{sanitized_pr_branch}
+          # DESIGN: Replace slashes with hyphens to avoid deep directory hierarchies
+          sanitized_pr_branch="${pr_branch//\//-}"
+          worktree_dir="worktree/${sanitized_pr_branch}"
+          mkdir -p "${runner.temp}/worktree"
 
           # ============================================
           # GITHUB_OUTPUT Block
@@ -219,8 +221,6 @@ jobs:
 
             # Get git index mode (100644 = normal, 100755 = executable)
             mode=$(git ls-files --stage "$file" 2>/dev/null | awk '{print $1}')
-
-            echo "Checking $file -- $mode""
 
             if [ -z "$mode" ]; then
               echo "::warning::File not in git index: $file (skipped)"
