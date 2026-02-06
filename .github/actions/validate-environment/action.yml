@@ -131,7 +131,6 @@ runs:
         EXPECTED_ARCHITECTURE: ${{ inputs.architecture }}
       run: |
         set -euo pipefail
-        echo "Local Action: Validate Environment"
         "${GITHUB_ACTION_PATH}/scripts/validate-git-runner.sh"
       # Outputs: status, message (written to $GITHUB_OUTPUT by script)
 
