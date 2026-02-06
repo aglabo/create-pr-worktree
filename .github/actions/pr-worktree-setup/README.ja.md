@@ -22,11 +22,14 @@ Sigstore を使用したキーレス署名付きコミットのための git wor
 
 ## 前提条件
 
-**必要なワークフロー設定:**
+### 必須要件
 
-- このアクションの前に `actions/checkout` を使用してリポジトリをチェックアウトしてください
-- ベースブランチをチェックアウトしてください (worktree は現在のブランチから作成されます)
-- 作業ディレクトリはリポジトリルートである必要があります
+以下は pr-worktree-setup を使用するために**必須**です。
+
+**ワークフロー設定:**
+
+- このアクションの前に `actions/checkout` を使用してリポジトリをチェックアウト
+- 作業ディレクトリはリポジトリルート
 
 **必要なパーミッション:**
 
@@ -38,8 +41,32 @@ permissions:
 
 **ランナー要件:**
 
-- Linux ランナー (amd64) - ubuntu-latest 推奨
+- Linux ランナー (amd64) - ubuntu-latest, ubuntu-22.04, または ubuntu-20.04
+- Git 2.0+（GitHub-hosted runners に標準装備）
+
+### 推奨要件
+
+**Git バージョン:**
+
 - Git 2.30+ 推奨 (worktree 安定性のため)
+- Git 2.0+ で動作しますが、2.30 未満では機能制限の可能性があります
+
+**ベースブランチ:**
+
+- Worktree 作成前にベースブランチをチェックアウト推奨
+- 指定しない場合、現在のブランチから worktree が作成されます
+
+### 単体使用時の要件
+
+pr-worktree-setup を他のアクション（create-pr-from-worktree、pr-worktree-cleanup）なしで単体で使用する場合の最低要件。
+
+- Linux runner (ubuntu-latest 推奨)
+- Git 2.0+（GitHub-hosted runners に標準装備）
+- 上記の必須パーミッション（id-token: write, contents: write）
+
+> 補足:
+> このアクションは単体で Worktree 作成と Sigstore 署名設定を完了します。
+> create-pr-from-worktree と組み合わせる場合、追加のパーミッション（`pull-requests: write`）および GitHub CLI (`gh`) が必要です。
 
 ## 入力
 
@@ -220,6 +247,35 @@ permissions:
 - `id-token: write` パーミッションが設定されていることを確認
 - アクションログで検証出力を確認
 - コミットが worktree ディレクトリ内で行われていることを確認
+
+## FAQ
+
+### 動作環境の検証について
+
+このアクション単体でも動作しますが、動作環境を保証するために [validate-environment](https://github.com/aglabo/.github/tree/main/.github/actions/validate-environment) アクションの使用を推奨します。
+
+事前の環境検証により、以下を確認できます。
+
+- Linux runner の確認
+- Git バージョンの確認
+- 必要なツールの存在確認
+
+使用例:
+
+```yaml
+- name: Validate environment
+  uses: aglabo/.github/.github/actions/validate-environment@r1.2.0
+  with:
+    additional_apps: "gh|gh|regex:version ([0-9.]+)|2.0"
+
+- name: Setup PR worktree
+  uses: ./.github/actions/pr-worktree-setup
+  with:
+    branch-name: feature/my-branch
+    worktree-dir: ${{ runner.temp }}/worktree
+```
+
+環境検証により、セットアップ失敗を早期に検出し、明確なエラーメッセージを提供できます。
 
 ## セキュリティ上の考慮事項
 

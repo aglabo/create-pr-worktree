@@ -1,694 +1,362 @@
-# PR Worktree Cleanup - ワークツリークリーンアップアクション
+# PR Worktree Cleanup
 
 <!-- textlint-disable ja-technical-writing/sentence-length -->
 <!-- textlint-disable ja-technical-writing/no-exclamation-question-mark -->
 <!-- markdownlint-disable line-length -->
 
-Git worktree を安全かつ冪等的に削除する Composite Action。
+`pr-worktree-setup` で作成した git worktree を安全に削除する composite action。
 
-## TL;DR (結論)
+## Overview
 
-- 本番では`worktree-dir`を必ず明示的に指定する (自動検出は fallback、信頼性低)
-- `if: always() && steps.init.outcome == 'success'`が基本形 (再実行安全性確保)
-- `reason`出力で全 12 パターンを判定可能 (success/skipped/error すべてに理由あり)
+このアクションは、git worktree の安全かつ冪等なクリーンアップを提供します。`pr-worktree-setup` アクションと対になり、完全な worktree ライフサイクル管理を提供します。
 
----
+**Key Features**:
 
-## 概要
+- worktree の削除前に存在を検証
+- ディレクトリが実際に git worktree であることを確認
+- 冪等な動作 (複数回実行しても安全)
+- すでに削除済みの worktree を適切に処理
+- クリーンアップ操作の詳細なステータスレポート
+- `if: always()` と組み合わせて確実なクリーンアップを実現
 
-### このアクションとは
+## Prerequisites
 
-`pr-worktree-setup`で作成した git worktree を安全に削除するためのアクションです。以下の特徴を持ちます。
+**Minimal Requirements**:
 
-- 安全性: 複数層のバリデーションで誤削除を防止
-- 冪等性: 何度実行しても同じ結果 (再実行に安全)
-- 透明性: 詳細な reason code で結果を明示
-- fail-fast: バリデーションエラーは即座に失敗 (CLAUDE.md 準拠)
+- Git 2.30+
+- worktree は git で管理されている必要があります (`git worktree add` で作成)
 
-### 主な機能
+**Recommended Usage**:
 
-- Worktree 存在確認と git 登録状態の検証
-- Uncommitted changes の検出 (force オプションで制御)
-- 複数の worktree が存在する場合の安全なスキップ
-- 詳細な出力 (status + 12種類の reason code)
-- `if: always()` との組み合わせで確実なクリーンアップ
-
----
-
-## クイックスタート (推奨パターン)
-
-最も安全で推奨される使い方:
+`pr-worktree-setup` アクションと組み合わせて完全なワークフローを構築:
 
 ```yaml
-name: PR 自動作成ワークフロー
+- name: worktree を初期化
+  id: init-worktree
+  uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-setup@v0.0.1
+  with:
+    branch-name: feature/my-branch
+    worktree-dir: ${{ runner.temp }}/worktree
+
+# ... worktree 内で作業 ...
+
+- name: worktree をクリーンアップ
+  if: always()
+  uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-cleanup@v0.0.1
+  with:
+    worktree-dir: ${{ steps.init-worktree.outputs.worktree-path }}
+```
+
+## Inputs
+
+| Input          | Required | Default | Description                                                         |
+| -------------- | -------- | ------- | ------------------------------------------------------------------- |
+| `worktree-dir` | No       | -       | 削除する worktree のディレクトリパス (指定しない場合は自動検出)     |
+| `base-branch`  | No       | -       | クリーンアップから除外するベースブランチ (指定しない場合は自動検出) |
+| `force`        | No       | `false` | コミットされていない変更がある場合でも強制的に削除                  |
+
+## Outputs
+
+| Output         | Description                                              |
+| -------------- | -------------------------------------------------------- |
+| `status`       | クリーンアップ操作のステータス (success, skipped, error) |
+| `message`      | クリーンアップ操作の詳細メッセージ                       |
+| `removed-path` | 削除された worktree のパス                               |
+
+## Usage
+
+### Basic Usage with if: always()
+
+```yaml
+- name: worktree をクリーンアップ
+  if: always()
+  uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-cleanup@v0.0.1
+  with:
+    worktree-dir: ${{ runner.temp }}/my-worktree
+```
+
+`if: always()` 条件により、前のステップが失敗した場合でもクリーンアップが実行されます。
+
+### Integration with pr-worktree-setup
+
+```yaml
+name: 署名付き PR の作成
 
 permissions:
+  id-token: write
   contents: write
+  pull-requests: write
 
 jobs:
   create-pr:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
 
-      # Worktree 作成
-      - name: Worktree 初期化
-        id: init
-        uses: ./.github/actions/pr-worktree-setup
+      - name: gitsign で worktree を初期化
+        id: init-worktree
+        uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-setup@v0.0.1
         with:
           branch-name: feature/my-feature
           worktree-dir: ${{ runner.temp }}/pr-worktree
 
-      # 作業実行
       - name: 変更を加える
         run: |
-          cd ${{ steps.init.outputs.worktree-path }}
-          # ... 作業 ...
+          cd ${{ steps.init-worktree.outputs.worktree-path }}
+          echo "# New Feature" > feature.md
+          git add feature.md
+          git commit -m "feat: add new feature"
+          git push origin feature/my-feature
 
-      # クリーンアップ (必ず実行)
-      - name: Worktree クリーンアップ
-        if: always() && steps.init.outcome == 'success'
-        uses: ./.github/actions/pr-worktree-cleanup
+      - name: PR を作成
+        run: |
+          gh pr create --title "Add new feature" --body "..."
+
+      - name: worktree をクリーンアップ
+        if: always()
+        uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-cleanup@v0.0.1
         with:
-          worktree-dir: ${{ steps.init.outputs.worktree-path }} # 明示的に指定
+          worktree-dir: ${{ steps.init-worktree.outputs.worktree-path }}
 ```
 
-重要なポイント:
-
-1. `worktree-dir`を必ず指定: 自動検出は fallback 機能 (後述)
-2. `if: always() && steps.init.outcome == 'success'`: 再実行時の安全性確保
-3. `worktree-path`出力を使用: 初期化ステップの出力を直接渡す
-
----
-
-## 前提条件 (必読)
-
-### 必須の前提条件
-
-このアクションを使用する前に、以下の条件を**必ず**満たす必要があります。
-
-| 前提条件                         | 説明                                                             |
-| -------------------------------- | ---------------------------------------------------------------- |
-| **リポジトリのチェックアウト**   | `actions/checkout@v4` などで事前にチェックアウト済みであること   |
-| **Worktree の作成**              | `pr-worktree-setup`または`git worktree add`で作成された worktree |
-| **同一ジョブ内での実行**         | Worktree を作成したジョブと同じジョブ内で実行すること            |
-| **Linux ランナー**               | ubuntu-latest 推奨 (Windows/macOS は非対応)                      |
-| **Git リポジトリ内での実行**     | `.git`ディレクトリが存在すること                                 |
-| **Base branch のチェックアウト** | 自動検出を使う場合のみ (明示的指定では不要)                      |
-
-### サポートされない使用方法
-
-以下のシナリオは**サポート外**であり、エラーまたは予期しない動作となります。
-
-| シナリオ                               | 理由                                               |
-| -------------------------------------- | -------------------------------------------------- |
-| 別ジョブで作成した worktree の削除     | ジョブ間でファイルシステムが共有されない           |
-| ジョブ再実行で worktree がすでに削除済 | `if: steps.init.outcome == 'success'`で回避可能    |
-| Windows/macOS ランナー                 | テスト未実施、動作保証なし                         |
-| Git 管理外のディレクトリ               | Git worktree として登録されていない                |
-| 手動削除後のアクション実行             | `status=skipped, reason=already-removed`で安全終了 |
-
-### 必要な権限とランナー要件
-
-ワークフロー権限:
+### Force Removal
 
 ```yaml
-permissions:
-  contents: write # Git 操作に必要
-```
-
-ランナー要件:
-
-- OS: Linux (amd64) - ubuntu-latest 推奨
-- Git: 2.30+ 推奨 (worktree 安定性のため)
-
----
-
-## 入出力仕様
-
-### 入力パラメータ
-
-| パラメータ     | 必須 | デフォルト | 説明                                                                  |
-| -------------- | ---- | ---------- | --------------------------------------------------------------------- |
-| `worktree-dir` | No   | -          | **[強く推奨]** 削除する worktree のパス。明示的指定を推奨 (後述)      |
-| `base-branch`  | No   | -          | 自動検出時に除外するベースブランチ (fallback: GITHUB_BASE_REF → main) |
-| `force`        | No   | `false`    | Uncommitted changes がある場合も強制削除するか                        |
-
-#### worktree-dir の重要性
-
-本番環境では必ず明示的に指定:
-
-| 指定方法       | メリット                       | デメリット             |
-| -------------- | ------------------------------ | ---------------------- |
-| **明示的指定** | 再実行安全、デバッグ容易、明確 | なし (推奨)            |
-| 自動検出       | コード量削減                   | 再実行失敗、複雑、脆弱 |
-
-自動検出の制限事項:
-
-- ジョブ再実行時に失敗する (worktree がすでに削除済み)
-- 複数 worktree がある場合は`reason=multiple`でスキップ
-- Base branch のチェックアウトが必要
-- デバッグが困難
-
-推奨パターン:
-
-```yaml
-# 推奨
-- id: init
-  uses: ./.github/actions/pr-worktree-setup
+- name: worktree を強制的にクリーンアップ
+  uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-cleanup@v0.0.1
   with:
-    worktree-dir: ${{ runner.temp }}/pr-worktree
-
-- uses: ./.github/actions/pr-worktree-cleanup
-  with:
-    worktree-dir: ${{ steps.init.outputs.worktree-path }}
-
-# 非推奨 (fallback として許容)
-- uses: ./.github/actions/pr-worktree-cleanup
-  # worktree-dir 未指定 = 自動検出
+    worktree-dir: ${{ runner.temp }}/worktree
+    force: true
 ```
 
-### 出力
+`force: true` を指定すると、worktree にコミットされていない変更がある場合でも削除されます。CI/CD 環境で一時的な worktree を確実にクリーンアップする場合に有効です。
 
-| 出力             | 型     | 説明                                                     |
-| ---------------- | ------ | -------------------------------------------------------- |
-| `status`         | string | クリーンアップのステータス (`success`/`skipped`/`error`) |
-| `reason`         | string | 結果の理由を示す統一コード (全12種類、下記参照)          |
-| `message`        | string | 人間が読める詳細メッセージ                               |
-| `removed-path`   | string | 削除された worktree のパス (削除されなかった場合は空)    |
-| `worktree-count` | number | 自動検出で見つかった worktree 数 (明示的指定時は0)       |
-| `worktree-list`  | string | 自動検出で見つかった worktree パスの改行区切りリスト     |
+デフォルトは `force: false` で、コミットされていない変更がある場合は `error` ステータスで削除を中止します。これにより、意図しない作業の喪失を防ぎます。
 
-#### Reason Code 完全リファレンス
-
-単一の`reason`フィールドですべての状況を説明 (12種類):
-
-| status    | reason             | 意味                                               |
-| --------- | ------------------ | -------------------------------------------------- |
-| `success` | `removed`          | クリーンな worktree を正常に削除                   |
-| `success` | `removed-dirty`    | Uncommitted changes ありで削除 (force=true)        |
-| `skipped` | `no-path`          | worktree-dir 未指定かつ自動検出不可                |
-| `skipped` | `already-removed`  | ディレクトリがすでに存在しない (冪等性)            |
-| `skipped` | `multiple`         | 複数 worktree 検出 (明示的指定が必要)              |
-| `skipped` | `no-worktrees`     | Worktree が見つからない (自動検出)                 |
-| `error`   | `not-registered`   | ディレクトリは存在するが git worktree として未登録 |
-| `error`   | `missing-marker`   | `.git`ファイルが欠落 (破損)                        |
-| `error`   | `invalid-worktree` | 有効な git working tree ではない                   |
-| `error`   | `uncommitted`      | Uncommitted changes あり + force=false             |
-| `error`   | `git-failed`       | Git コマンドの実行失敗                             |
-| `error`   | `removal-failed`   | `git worktree remove`コマンドの失敗                |
-
-#### Reason Code の活用例
-
-実際に削除されたか判定:
+### Auto-Detection Mode
 
 ```yaml
-- if: steps.cleanup.outputs.reason == 'removed' || steps.cleanup.outputs.reason == 'removed-dirty'
-  run: echo "Worktree は削除されました"
-```
-
-Uncommitted changes のシナリオ検出:
-
-```yaml
-# Force 削除された場合
-- if: steps.cleanup.outputs.reason == 'removed-dirty'
-  run: echo "::warning::Uncommitted changes が force 削除されました"
-
-# Force=false で拒否された場合
-- if: steps.cleanup.outputs.reason == 'uncommitted'
-  run: echo "::error::Uncommitted changes のため削除できませんでした"
-```
-
-自動検出の問題対応:
-
-```yaml
-- if: steps.cleanup.outputs.reason == 'multiple'
-  run: |
-    echo "::warning::複数の worktree が検出されました"
-    echo "検出数: ${{ steps.cleanup.outputs.worktree-count }}"
-    echo "パス一覧:"
-    echo "${{ steps.cleanup.outputs.worktree-list }}"
-```
-
----
-
-## 使用パターン集
-
-### 基本パターン: if: always() との組み合わせ
-
-```yaml
-- name: Worktree クリーンアップ
+- name: worktree をクリーンアップ (自動検出)
   if: always()
-  uses: ./.github/actions/pr-worktree-cleanup
-  with:
-    worktree-dir: ${{ runner.temp }}/my-worktree
+  uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-cleanup@v0.0.1
 ```
 
-`if: always()`により、前のステップが失敗してもクリーンアップを実行します。
+入力を指定しない場合、アクションは自動的に以下を実行します。
 
-### 安全なパターン: force=false (デフォルト)
+1. 現在のブランチをベースブランチとして検出
+2. `git worktree list --porcelain` でベースブランチではない worktree を正確に検出
+3. worktree 数を確認:
+   - 0 個: `skipped` ステータスを返す
+   - 複数個: `skipped` ステータスを返し、`worktree-dir` の明示的な指定を推奨
+   - 1 個: 検出された worktree を削除
 
-```yaml
-- name: 安全なクリーンアップ
-  uses: ./.github/actions/pr-worktree-cleanup
-  with:
-    worktree-dir: ${{ runner.temp }}/worktree
-    force: false # デフォルト、明示的に指定も可
-```
+worktree が 1 つしかなく、自動クリーンアップしたい場合に便利です。`--porcelain` 形式を使用することで、branch 名の部分一致による誤検出を防ぎます。複数の worktree がある場合は、安全のため `worktree-dir` を明示的に指定します。
 
-Uncommitted changes がある場合は`reason=uncommitted`で失敗します。
-
-### 強制削除パターン: force=true
+### Handling Cleanup Status
 
 ```yaml
-- name: 強制クリーンアップ
-  uses: ./.github/actions/pr-worktree-cleanup
-  with:
-    worktree-dir: ${{ runner.temp }}/worktree
-    force: true # Uncommitted changes も削除
-```
-
-Uncommitted changes がある場合は`reason=removed-dirty`で成功します。
-
-### 高度なパターン: Reason Code による分岐
-
-```yaml
-- name: Worktree クリーンアップ
+- name: worktree をクリーンアップ
   id: cleanup
   if: always()
-  uses: ./.github/actions/pr-worktree-cleanup
+  uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-cleanup@v0.0.1
   with:
     worktree-dir: ${{ runner.temp }}/worktree
 
-- name: 結果に応じた処理
+- name: クリーンアップステータスを確認
   if: always()
   run: |
-    case "${{ steps.cleanup.outputs.reason }}" in
-      removed)
-        echo "成功: クリーンな削除完了"
-        ;;
-      removed-dirty)
-        echo "警告: 未コミット変更を含めて削除 (force=true) "
-        ;;
-      already-removed)
-        echo "スキップ: 既に削除済み (冪等性) "
-        ;;
-      uncommitted)
-        echo "エラー: 未コミット変更のため削除失敗 (force=false) "
-        exit 1
-        ;;
-      multiple)
-        echo "スキップ: 複数 worktree 検出、明示的指定が必要"
-        echo "検出数: ${{ steps.cleanup.outputs.worktree-count }}"
-        ;;
-      *)
-        echo "その他: ${{ steps.cleanup.outputs.message }}"
-        ;;
-    esac
-
-- name: Force 削除時の警告
-  if: always() && steps.cleanup.outputs.reason == 'removed-dirty'
-  run: |
-    echo "::warning::未コミット変更が削除されました"
-    echo "パス: ${{ steps.cleanup.outputs.removed-path }}"
-
-- name: エラー時の処理
-  if: always() && steps.cleanup.outputs.status == 'error'
-  run: |
-    echo "::error::クリーンアップ失敗 (reason: ${{ steps.cleanup.outputs.reason }})"
-    echo "::error::${{ steps.cleanup.outputs.message }}"
-    exit 1
+    echo "Cleanup status: ${{ steps.cleanup.outputs.status }}"
+    echo "Cleanup message: ${{ steps.cleanup.outputs.message }}"
+    if [ "${{ steps.cleanup.outputs.status }}" = "error" ]; then
+      echo "::warning::Worktree cleanup failed, may need manual cleanup"
+    fi
 ```
 
-### 自動検出モード (非推奨、Fallback)
+## How It Works
 
-注意: 自動検出は fallback 機能です。本番環境では使用しないでください。
+1. Get Worktree Path:
+   - `worktree-dir` が指定されている場合: 直接使用
+   - 指定されていない場合: worktree を自動検出
+     - `base-branch` 入力または現在のブランチからベースブランチを検出
+     - `git worktree list --porcelain` でベースブランチではない worktree を正確に検出
+     - worktree 数を確認:
+       - 0 個: `skipped` (メッセージ: "No worktrees found")
+       - 複数個: `skipped` (メッセージ: "Multiple worktrees found, specify worktree-dir explicitly")
+       - 1 個: worktree-path を設定
+2. Validate Worktree: worktree の事前チェック
+   - worktree-path が指定されているか確認
+   - ディレクトリが存在するか確認
+   - ディレクトリが有効な git worktree か確認 (`.git` ファイルの存在)
+   - `force: false` の場合: コミットされていない変更を確認
+     - 変更がある場合: `error` ステータスで削除を中止（作業内容の喪失を防ぐ）
+     - 変更がない場合: 削除を続行
+   - 検証失敗時: `error` または `skipped` ステータスを返す
+3. Cleanup Worktree: worktree の削除
+   - `git worktree remove` を実行
+   - `force: true` の場合は `--force` フラグを使用
+4. Output Status: ステータス (success, skipped, または error) とメッセージを返す
 
-```yaml
-- name: 自動検出によるクリーンアップ
-  if: always()
-  uses: ./.github/actions/pr-worktree-cleanup
-  # worktree-dir を指定しない = 自動検出
-```
+## Status Meanings
 
-自動検出の動作:
+| Status    | Description                                            | Exit Code |
+| --------- | ------------------------------------------------------ | --------- |
+| `success` | worktree が正常に削除されました                        | 0         |
+| `skipped` | worktree が存在しません (すでにクリーンアップ済み)     | 0         |
+| `error`   | 削除が失敗しました (例: worktree ではない、git エラー) | 0         |
 
-1. Base branch を検出 (priority: input → GITHUB_BASE_REF → 検出 → "main")
-2. Base branch 以外の worktree を検索
-3. 1個だけ見つかれば削除、0個または複数個なら`status=skipped`
+すべてのステータスで Exit Code は 0 です。caller 側は `status` と `message` の outputs で結果を判断してください。
 
-制限事項:
+このアクションは冪等になるように設計されています。同じ worktree に対して複数回実行しても安全です。worktree がすでに削除されている場合は、`skipped` ステータスを返しますが、失敗しません。
 
-- ジョブ再実行で失敗
-- 複数 worktree がある場合は`reason=multiple`でスキップ
-- デバッグが困難
+## Error Handling
 
-許容される使用例:
+### Worktree Already Removed
 
-- 単純な単一 worktree ワークフロー
-- 実験・テスト用途
-- 再実行しないワークフロー
-
----
-
-## 動作の仕組み
-
-### 処理フロー
-
-```bash
-1. Base branch 取得 (自動検出時のみ)
-   ├─ Priority 1: inputs.base-branch
-   ├─ Priority 2: GITHUB_BASE_REF
-   ├─ Priority 3: git symbolic-ref (失敗しても続行)
-   └─ Fallback: "main"
-
-2. Worktree パス取得
-   ├─ inputs.worktree-dir があればそれを使用
-   └─ なければ自動検出
-      ├─ git worktree list で Base branch 以外を検索
-      ├─ 0個 → reason=no-worktrees, skipped
-      ├─ 1個 → 続行
-      └─ 2個以上 → reason=multiple, skipped
-
-3. バリデーション (3層)
-   ├─ ディレクトリ存在確認
-   │  └─ なし → reason=already-removed, skipped
-   ├─ Git worktree 登録確認
-   │  └─ 未登録 → reason=not-registered, error
-   ├─ .git マーカー確認
-   │  └─ なし → reason=missing-marker, error
-   ├─ Git work-tree 有効性確認
-   │  └─ 無効 → reason=invalid-worktree, error
-   └─ Uncommitted changes 確認
-      ├─ あり + force=false → reason=uncommitted, error
-      └─ あり + force=true → 続行 (reason=removed-dirty)
-
-4. 削除実行
-   ├─ git worktree remove [--force]
-   ├─ 成功 → reason=removed or removed-dirty, success
-   └─ 失敗 → reason=removal-failed, error
-```
-
-### ステップ詳細
-
-| ステップ            | 責務                                 | 条件付き実行                             |
-| ------------------- | ------------------------------------ | ---------------------------------------- |
-| `get-base-branch`   | Base branch の決定                   | `inputs.worktree-dir == ''`              |
-| `get-worktree`      | Worktree パスの取得または自動検出    | 常に実行                                 |
-| `validate-worktree` | 3層バリデーション + uncommitted 確認 | `get-worktree.outcome == 'success'`      |
-| `cleanup-worktree`  | `git worktree remove`実行            | `validate-worktree.outcome == 'success'` |
-| `output-results`    | 最終結果の表示                       | `always()`                               |
-
----
-
-## トラブルシューティング
-
-### よくあるエラーと Reason Code
-
-#### reason=already-removed (skipped)
-
-状況: ディレクトリがすでに存在しない。
+**Behavior**: `skipped` ステータスを返し、失敗しません。
 
 ```bash
 status=skipped
-reason=already-removed
+message=No worktrees found to clean up (excluding base branch: main)
 ```
 
-原因:
+クリーンアップが複数回実行された場合や、worktree が手動で削除された場合、これは正常な動作です。
 
-- クリーンアップが複数回実行された
-- 手動で削除済み
-- Worktree の作成に失敗していた
+### Directory Exists But Not a Worktree
 
-対処: 正常動作 (冪等性) 。ログを確認して worktree 作成が成功しているか確認。
-
-#### reason=not-registered (error)
-
-状況: ディレクトリは存在するが git worktree として未登録。
+**Behavior**: `error` ステータスを返して失敗。
 
 ```bash
-::error::Path is not a registered git worktree
+EXIT_STATUS=error:Directory is not a valid git worktree
+```
+
+**Solution**: パスが `git worktree add` で作成されたディレクトリを指していることを確認してください。
+
+### Uncommitted Changes with force: false
+
+**Behavior**: `error` ステータスを返して削除を中止。
+
+```bash
 status=error
-reason=not-registered
+message=Cannot remove worktree with uncommitted changes (force=false): /path/to/worktree
 ```
 
-原因:
+**Solution**:
 
-- `git worktree add`以外で作成されたディレクトリ
-- パスの指定ミス
-- Worktree が別の方法で削除された後の残骸
+- 作業内容を保存したい場合: worktree 内で変更をコミットまたはスタッシュ
+- 削除を強制する場合: `force: true` を設定
 
-対処: `git worktree list`で登録状態を確認。正しいパスを指定する。
+### Git Worktree Remove Failed
 
-#### reason=uncommitted (error)
+**Behavior**: `error` ステータスを返して失敗。
 
-状況: Uncommitted changes あり + force=false。
+**Common Causes**:
 
-```bash
-::error::Cannot remove worktree with uncommitted changes (force=false)
-::error::Changes found:
-M  file.txt
-status=error
-reason=uncommitted
-```
+- worktree が別のプロセスでロックされている
+- パーミッションの問題
+- worktree が破損している
 
-原因:
+**Solution**: ログの git エラーメッセージを確認し、手動で調査してください。
 
-- 作業中の変更がコミットされていない
-- Git add されていないファイルが存在
+## Troubleshooting
 
-対処:
+### Cleanup Always Shows Skipped
 
-1. 変更をコミット・プッシュする
-2. または`force: true`を指定 (`reason=removed-dirty`になる)
+**Cause**: クリーンアップ実行時に worktree が見つからない。
 
-#### reason=multiple (skipped)
+**Possible Reasons**:
 
-状況: 自動検出で複数 worktree 検出。
+- クリーンアップが複数回実行されている
+- worktree の作成が正常に完了しなかった
+- worktree が手動または別のステップで削除された
 
-```bash
-::notice::Multiple worktrees found (3), skipping auto-detection
-status=skipped
-reason=multiple
-```
+**Solution**: ワークフローログで worktree の作成が成功したことを確認してください。`pr-worktree-setup` の output を使用している場合、ステップ ID が一致していることを確認してください。
 
-原因:
+### Cleanup Fails with "Not a Valid Git Worktree"
 
-- Base branch 以外に複数の worktree が存在
-- 自動検出では判断不可
+**Cause**: ディレクトリは存在しますが、`git worktree add` で作成されていない。
 
-対処: `worktree-dir`を明示的に指定する (推奨パターン) 。
-
-#### reason=invalid-worktree (error)
-
-状況: 有効な git working tree ではない。
-
-```bash
-::error::Path is not a valid git working tree
-status=error
-reason=invalid-worktree
-```
-
-原因:
-
-- Worktree の破損
-- `.git`ファイルの内容が不正
-
-対処: `git worktree list`で状態確認。必要なら`git worktree prune`で整理。
-
-### 再実行時の問題
-
-問題: ジョブ再実行時にクリーンアップが失敗する。
-
-原因: 最初の実行で worktree が削除済み、自動検出が`reason=no-worktrees`を返す。
-
-解決策:
-
-```yaml
-- name: Worktree クリーンアップ
-  if: always() && steps.init.outcome == 'success' # 初期化成功時のみ
-  uses: ./.github/actions/pr-worktree-cleanup
-  with:
-    worktree-dir: ${{ steps.init.outputs.worktree-path }} # 明示的指定
-```
+**Solution**: `pr-worktree-setup` から正しいパスを渡していることを確認してください。任意のディレクトリを渡さないでください。
 
 ### Permission Denied
 
-問題: Git または filesystem の権限エラー。
+**Cause**: Git またはファイルシステムのパーミッション問題。
 
-解決策:
+**Solution**: ワークフローで Git 操作／ファイル操作のためのパーミッションが設定済みで、worktree が別のプロセスでロックされていないことを確認してください。
 
-- ワークフローに`contents: write`権限があるか確認
-- Worktree が別プロセスでロックされていないか確認
-- Runner の一時ディレクトリ (`${{ runner.temp }}`) を使用
+## Design Decisions
 
----
+### Why Default force: false?
 
-## 設計思想
+デフォルトの `force: false` は、安全性を優先した設計です。コミットされていない変更がある場合、削除を失敗させることで、意図しない作業の喪失を防ぎます。
 
-### なぜ Strict Mode (force=false) がデフォルトか？
+CI/CD 環境で worktree が一時的であり、強制削除が必要な場合は、明示的に `force: true` を設定してください。`force: false` の場合でも、コミットされていない変更があると警告が表示されます。
 
-理由: 安全性優先。
+### Why Skipped Instead of Error for Missing Worktree?
 
-- データ損失防止: 未コミット変更を保護
-- 明示的な意図: `force: true`で意図的に選択
-- CI/CD との整合性: 一時 worktree はクリーンであるべき
+worktree が存在しない場合に `error` ではなく `skipped` ステータスを返すことで、アクションが冪等になります。
+これは以下の場合に有効です。
 
-使い分け:
+- `if: always()` ブロックでクリーンアップを複数回実行する可能性がある
+- 別のステップがすでに worktree を削除している
+- worktree の作成が失敗したがクリーンアップは実行される
 
-- force=false (デフォルト): 本番ワークフロー、データ保護重視
-- force=true: CI/CD の一時環境、未コミット変更を気にしない
+`skipped` ステータスは明示的に「対象なし」を表し、caller 側で分岐しやすくなります。CI/CD パイプラインでの誤検出による失敗を防ぎます。
 
-### なぜ Unified Reason Field か？
+### Why Validate It's a Git Worktree?
 
-以前の設計 (複雑):
+検証により、任意のディレクトリに対して誤って `git worktree remove` を実行することを防ぎ、予期しない動作の発生を回避します。
+`.git` ファイル (worktree マーカー) をチェックすることで、アクションは正当な git worktree に対してのみ動作します。
 
-```yaml
-outputs:
-  removed: true/false
-  was-dirty: true/false
-  skip-reason: no-path/multiple/...
-  # error-reason は存在しない
-```
+## Pairing with pr-worktree-setup
 
-問題点:
-
-- 複数のフィールドを組み合わせる必要がある
-- エラー時の理由が不明
-- 条件分岐が複雑
-
-新しい設計 (シンプル):
+このアクションは `pr-worktree-setup` と対になるように設計されています。
 
 ```yaml
-outputs:
-  reason: removed/removed-dirty/uncommitted/multiple/...
-  # 単一フィールドで全12パターンをカバー
-```
-
-利点:
-
-1. **シンプルな条件分岐**: `if: reason == 'removed-dirty'`
-2. **完全な網羅性**: Success/Skipped/Error すべてに reason あり
-3. **自己文書化**: Reason code が人間、機械の双方に読みやすい
-4. **拡張性**: 新しい reason を追加しても既存ロジックに影響なし
-
-### なぜ Auto-detect は Fallback か？
-
-Auto-detect の問題:
-
-- ジョブ再実行で失敗する (worktree がすでに削除済み)
-- 複数 worktree がある場合は判断不可
-- Base branch のチェックアウトが必要
-- デバッグが困難
-
-設計方針:
-
-1. **信頼性 > 便利さ**
-2. **明示性 > 魔法**
-3. **再実行安全性 > 自動化**
-
-推奨: 常に`worktree-dir`を明示的に指定し、初期化ステップの出力を渡す。
-
-### Fail-fast vs Idempotent (CLAUDE.md 準拠)
-
-このアクションは [CLAUDE.md](../../../CLAUDE.md) の fail-fast validation パターンに従います。
-
-#### Fail-fast とは？
-
-Fail-fast (即座に失敗): バリデーションエラーを検出した時点で即座に`exit 1`で失敗する戦略。
-
-目的:
-
-- エラーの早期発見
-- 問題のある状態での続行を防ぐ
-- 明確な成功/失敗シグナル
-
-CLAUDE.md の原則:
-
-```yaml
-# REQUIRED: Fail-Fast Validation
-if: steps.previous_step.outcome == 'success'
-
-# バリデーションエラーは exit 1 で即座に失敗
-if [ "$ERROR_CONDITION" ]; then
-  echo "::error::Validation failed: reason"
-  exit 1
-fi
-```
-
-#### このアクションの実装
-
-| シナリオ             | 動作             | Exit Code | 理由                   |
-| -------------------- | ---------------- | --------- | ---------------------- |
-| バリデーションエラー | `status=error`   | 1         | 即座に失敗 (fail-fast) |
-| 冪等的なシナリオ     | `status=skipped` | 0         | 問題なし (idempotent)  |
-| 削除成功             | `status=success` | 0         | 正常完了               |
-
-重要な設計決定:
-
-- `status=error` + `exit 0`の組み合わせは存在しない
-- バリデーションエラーは必ず`exit 1` (fail-fast)
-- 冪等的なケース (すでに削除済みなど) は`exit 0` (正常終了)
-
-例外:「すでに削除済み」は`reason=already-removed, status=skipped, exit 0` (冪等性を保証)
-
----
-
-## 参考情報
-
-### 関連アクション
-
-- [PR Worktree Setup](../pr-worktree-setup/README.ja.md) - Worktree 作成とペアで使用
-- [Create PR from Worktree](../create-pr-from-worktree/README.ja.md) - Worktree 内でコミット・PR 作成
-
-### ペアリング例
-
-```yaml
-# 完全なワークフロー例
-- name: Worktree 初期化
-  id: init
-  uses: ./.github/actions/pr-worktree-setup
+# 初期化
+- name: worktree を初期化
+  id: init-worktree
+  uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-setup@v0.0.1
   with:
     branch-name: feature/my-branch
     worktree-dir: ${{ runner.temp }}/worktree
 
-- name: 作業実行
-  run: |
-    cd ${{ steps.init.outputs.worktree-path }}
-    # ... 変更 ...
+# ... 作業 ...
 
-- name: Worktree クリーンアップ
-  if: always() && steps.init.outcome == 'success'
-  uses: ./.github/actions/pr-worktree-cleanup
+# クリーンアップ (常に実行)
+- name: worktree をクリーンアップ
+  if: always()
+  uses: aglabo/create-pr-sandbox/.github/actions/pr-worktree-cleanup@v0.0.1
   with:
-    worktree-dir: ${{ steps.init.outputs.worktree-path }}
+    worktree-dir: ${{ steps.init-worktree.outputs.worktree-path }}
 ```
 
-### セキュリティ考慮事項
+**Key Points**:
 
-安全なデフォルト:
+- 初期化から `worktree-path` output を使用 (絶対パス)
+- クリーンアップを確実に実行するため、常に `if: always()` を使用
+- クリーンアップステップをジョブの最後に配置
 
-- Git worktree のみを削除 (`.git`ファイル存在確認)
-- 任意のディレクトリを削除しない
-- 情報豊富なエラーメッセージで透明性確保
+## Security Considerations
 
-Force フラグ:
+**Safe Defaults**:
 
-- `force: true`: Uncommitted changes も削除 (`reason=removed-dirty`)
-- `force: false`: Uncommitted changes を保護 (`reason=uncommitted`でエラー)
-- ワークフローの要件に応じて選択
+- git worktree のみを削除 (`.git` ファイルの存在を検証)
+- 任意のディレクトリは削除しない
+- 情報を提供するエラーメッセージで適切に失敗
 
-### ライセンス
+**Force Flag**:
+
+- `force: true` はコミットされていない変更がある場合でも worktree を削除
+- `force: false` はコミットされていない変更を保持し、存在する場合は失敗
+- ワークフローの要件に基づいて選択
+
+## License
 
 MIT License - リポジトリの LICENSE ファイルを参照。
 
-### 参照
+## References
 
-- [Git Worktree ドキュメント](https://git-scm.com/docs/git-worktree)
-- [GitHub Actions ワークフロー構文](https://docs.github.com/ja/actions/using-workflows/workflow-syntax-for-github-actions)
-- [CLAUDE.md - AI 協働ガイド](../../../CLAUDE.md)
-
----
-
-最終更新: 2026-02-04
-バージョン: 2.0 (Unified Reason Field 対応)
+- [Git Worktree Documentation](https://git-scm.com/docs/git-worktree)
+- [PR Worktree Setup Action](../pr-worktree-setup/README.md)
+- [GitHub Actions Workflow Syntax](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions)

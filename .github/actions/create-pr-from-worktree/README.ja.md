@@ -300,6 +300,24 @@ PR 存在確認（`gh pr list`）が失敗した場合。
 
 GNU `timeout` の exit code 124 契約に依存しています。BSD timeout（macOS）は異なる exit code、Windows には timeout コマンドがありません。
 
+### なぜ `job.defaults.run.working-directory` を使わないのか？
+
+`job.defaults.run.working-directory` は step outputs を参照できないため、`worktree-path` のような動的パスには使用できません。
+
+各ステップで明示的に `working-directory` を指定します。
+
+例:
+
+```yaml
+- name: Make changes in worktree
+  working-directory: ${{ steps.setup.outputs.worktree-path }} # 動的パス
+  run: |
+    echo "fix" > fix.txt
+    git add fix.txt
+```
+
+参考: GitHub Actions の job.defaults.run は静的な値のみサポートし、`${{ }}` 式の評価はサポートしていません。
+
 ---
 
 ## Reference

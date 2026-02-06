@@ -48,6 +48,7 @@ jobs:
   create-pr:
     runs-on: ubuntu-latest
     steps:
+      # Note: Steps without working-directory run in the base directory
       - uses: actions/checkout@v4
 
       # 1. Setup worktree
@@ -67,11 +68,7 @@ jobs:
           git commit -m "fix: Apply auto-fix"
           git push origin auto-fix/${{ github.ref_name }}
 
-      # 3. Return to main (IMPORTANT!)
-      - name: Return to main
-        run: git checkout ${{ github.ref_name }}
-
-      # 4. Create PR (this action)
+      # 3. Create PR (this action)
       - name: Create PR
         uses: ./.github/actions/create-pr-from-worktree
         with:
@@ -81,7 +78,7 @@ jobs:
           labels: "automated,fix"
           merge-method: "squash"
 
-      # 5. Cleanup (always run)
+      # 4. Cleanup (always run)
       - name: Cleanup worktree
         if: always() && steps.setup.outcome == 'success'
         uses: ./.github/actions/pr-worktree-cleanup
@@ -195,14 +192,15 @@ permissions:
 │ - Checked out to PR branch                  │
 │ - Sigstore gitsign configured               │
 │ - Work: git commit → git push               │
+│   (using working-directory)                 │
 └─────────────────────────────────────────────┘
-              ↓ git checkout main (IMPORTANT!)
+              ↓ create-pr-from-worktree (base directory)
 ┌─────────────────────────────────────────────┐
-│ Main Repository (returned to main)          │
+│ Main Repository (still in main)             │
 │ - Run create-pr-from-worktree               │
 │ - Auto-detect base branch (main)            │
 └─────────────────────────────────────────────┘
-              ↓ pr-worktree-cleanup
+              ↓ pr-worktree-cleanup (base directory)
 ┌─────────────────────────────────────────────┐
 │ Cleanup complete - Worktree removed, main clean │
 └─────────────────────────────────────────────┘
@@ -212,9 +210,9 @@ permissions:
 
 - Auto-detects currently checked-out branch as base
 - Retrieved via `git symbolic-ref --short HEAD`
-- **Must return to main after working in worktree**
+- **Steps run in base directory by default** (unless working-directory is specified)
 
-※ This action treats the "currently checked-out branch" as the base branch, so it cannot detect the correct base while in a worktree.
+※ This action treats the "currently checked-out branch" as the base branch.
 
 ※ No input option to specify base branch is provided. This design responsibility belongs to the caller workflow.
 
