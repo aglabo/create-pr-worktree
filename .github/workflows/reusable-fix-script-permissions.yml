@@ -61,7 +61,7 @@ defaults:
 
 jobs:
   validate-permissions:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 10
     outputs:
       status: ${{ steps.set-status.outputs.status }}
@@ -93,8 +93,8 @@ jobs:
         with:
           architecture: amd64 # Expected runner architecture
           additional-apps: |
-            "jq|jq||"
             "gh|gh (Github CLI)|regex:version ([0-9.]+)|2.0"
+            "jq|jq||"
 
       # ============================================
       # Branch and Pattern Configuration
