@@ -89,14 +89,12 @@ jobs:
       # ============================================
       - name: Validate runner environment and required tools
         id: validate-env
-        uses: aglabo/.github/.github/actions/validate-environment@r1.2.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/validate-environment
         with:
           architecture: amd64 # Expected runner architecture
           additional-apps: |
-            "gh|gh (Github CLI)|regex:version ([0-9.]+)|2.0"
-            "jq|jq||"
+            gh|gh (Github CLI)|regex:version ([0-9.]+)|2.0
+            jq|jq||
 
       # ============================================
       # Branch and Pattern Configuration
