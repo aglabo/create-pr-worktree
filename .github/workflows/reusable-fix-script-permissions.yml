@@ -187,7 +187,7 @@ jobs:
           base_sha: ${{ inputs.debug-base-sha }}
           files: ${{ steps.vars.outputs.files-pattern }}
           files_ignore: ${{ steps.vars.outputs.files-ignore-pattern }}
-          separator: "\n"
+          separator: " "
 
       # ============================================
       # Permission Filtering
@@ -198,14 +198,15 @@ jobs:
         if: steps.changed-scripts.outputs.any_changed == 'true'
         run: |
           changed_files="${{ steps.changed-scripts.outputs.all_changed_files }}"
-          echo "Changed Files: $changed_files "
 
           scripts_without_exec=""
           total_missing_perms=0
 
-          while IFS= read -r file; do
+          # Process space-separated file list
+          for file in $changed_files; do
             [ -z "$file" ] && continue
-            echo "Changed File: $file "
+
+            echo "Checking file: $file"
 
             # Check if file has shebang
             if [ ! -f "$file" ]; then
@@ -232,7 +233,7 @@ jobs:
             elif [ "$mode" != "100755" ]; then
               echo "::warning::Unexpected mode for $file: $mode"
             fi
-          done <<< "$changed_files"
+          done
 
           # Handle no-work case
           if [ "$total_missing_perms" -eq 0 ]; then
