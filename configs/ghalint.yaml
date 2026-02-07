@@ -43,6 +43,14 @@ excludes:
     job_name: test-action
     step_id: checkout
 
+  # fix-script-permissions.yml - Allow validate-environment action to use tag refs
+  # Reason: Temporary exception for Issue #38 debugging (external action reference)
+  - policy_name: action_ref_should_be_full_length_commit_sha
+    workflow_file_path: .github/workflows/reusable-fix-script-permissions.yml
+    job_name: validate-permissions
+    step_id: validate-env
+    action_name: aglabo/validate-environment
+
   # fix-script-permissions.yml - Allow create-pr-worktree actions to use tag refs
   # Reason: Internal project actions using semantic versioning tags for stability
   - policy_name: action_ref_should_be_full_length_commit_sha

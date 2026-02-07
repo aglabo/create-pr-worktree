@@ -67,9 +67,16 @@ runs:
       if: steps.validate-gitsign.outcome == 'success'
       shell: bash
       run: |
-        WORKTREE_DIR="${{ inputs.worktree-dir }}"
+        # Add run-id to worktree directory to prevent conflicts during concurrent runs
+        BASE_DIR="${{ inputs.worktree-dir }}"
+        UNIQUE_SUFFIX="${{ github.run_id }}"
+        WORKTREE_DIR="${RUNNER_TEMP}/${BASE_DIR}-${UNIQUE_SUFFIX}"
 
-        # Check if directory already exists
+        echo "Base directory: ${BASE_DIR}"
+        echo "Unique suffix: ${UNIQUE_SUFFIX}"
+        echo "Final worktree directory: ${WORKTREE_DIR}"
+
+        # Check if directory already exists (should not happen with run-id suffix)
         if [ -e "${WORKTREE_DIR}" ]; then
           echo "::error::Directory already exists: ${WORKTREE_DIR}"
           echo "::error::Cannot create worktree at existing location"
@@ -79,8 +86,11 @@ runs:
           exit 1
         fi
 
-        # Validate parent directory exists and is writable
+        # create parent directory
         PARENT_DIR=$(dirname "${WORKTREE_DIR}")
+        mkdir -p "${PARENT_DIR}"
+
+        # Validate parent directory exists and is writable
         if [ ! -d "${PARENT_DIR}" ]; then
           echo "::error::Parent directory does not exist: ${PARENT_DIR}"
           echo "::error::Cannot create worktree - parent directory must exist first"
@@ -97,6 +107,9 @@ runs:
         echo "  Target: ${WORKTREE_DIR}"
         echo "  Parent: ${PARENT_DIR} (exists and writable)"
 
+        # Output the final worktree directory for next steps
+        echo "worktree-dir=${WORKTREE_DIR}" >> $GITHUB_OUTPUT
+
     - name: Create worktree
       id: create-worktree
       if: |
@@ -104,7 +117,7 @@ runs:
         steps.validate-directory.outcome == 'success'
       shell: bash
       run: |
-        WORKTREE_DIR="${{ inputs.worktree-dir }}"
+        WORKTREE_DIR="${{ steps.validate-directory.outputs.worktree-dir }}"
         BRANCH_NAME="${{ inputs.branch-name }}"
 
         echo "Creating worktree at: ${WORKTREE_DIR}"
@@ -112,27 +125,41 @@ runs:
 
         # Check if branch already exists locally
         if git show-ref --verify --quiet "refs/heads/${BRANCH_NAME}"; then
-          echo "::error::Local branch already exists: ${BRANCH_NAME}"
-          echo "::error::Please use a different branch name or delete the existing branch first"
-          exit 1
+          echo "::notice::Local branch already exists: ${BRANCH_NAME}"
+          echo "Using existing branch (will update with new changes)"
+          BRANCH_EXISTS_LOCALLY=true
+        else
+          BRANCH_EXISTS_LOCALLY=false
         fi
 
-        # Check if branch already exists on remote (critical for shallow clones)
+        # Check if branch already exists on remote
         if git ls-remote --exit-code --heads origin "${BRANCH_NAME}" >/dev/null 2>&1; then
-          echo "::error::Remote branch already exists: ${BRANCH_NAME}"
-          echo "::error::This will cause conflicts in git worktree add"
-          echo "::error::Please use a different branch name or delete the remote branch first"
-          exit 1
+          echo "::notice::Remote branch already exists: ${BRANCH_NAME}"
+          echo "Will append new changes to existing branch"
+          BRANCH_EXISTS_REMOTELY=true
+        else
+          BRANCH_EXISTS_REMOTELY=false
         fi
 
-        echo "✓ Branch name is available (checked both local and remote)"
-
-        # Create worktree with new branch
-        if ! git worktree add "${WORKTREE_DIR}" -b "${BRANCH_NAME}"; then
-          echo "::error::Failed to create worktree"
-          echo "status=error" >> $GITHUB_OUTPUT
-          echo "message=Failed to create worktree at ${WORKTREE_DIR}" >> $GITHUB_OUTPUT
-          exit 1
+        # Create worktree
+        if [ "$BRANCH_EXISTS_LOCALLY" = true ]; then
+          # Use existing branch for worktree
+          echo "Creating worktree from existing branch..."
+          if ! git worktree add "${WORKTREE_DIR}" "${BRANCH_NAME}"; then
+            echo "::error::Failed to create worktree from existing branch"
+            echo "status=error" >> $GITHUB_OUTPUT
+            echo "message=Failed to create worktree at ${WORKTREE_DIR}" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+        else
+          # Create new branch for worktree
+          echo "Creating worktree with new branch..."
+          if ! git worktree add "${WORKTREE_DIR}" -b "${BRANCH_NAME}"; then
+            echo "::error::Failed to create worktree"
+            echo "status=error" >> $GITHUB_OUTPUT
+            echo "message=Failed to create worktree at ${WORKTREE_DIR}" >> $GITHUB_OUTPUT
+            exit 1
+          fi
         fi
 
         # Get absolute path

@@ -1,6 +1,7 @@
 name: Example - Fix Script Permissions
-
-# NOTE:
+# src: ./.github/workflows/example-fix-script-permissions.yml
+# @(#) : Example workflow demonstrating usage of reusable-fix-script-permissions.yml
+#
 # This workflow is an example usage of reusable-fix-script-permissions.yml.
 # Adjust triggers, branch selection, and patterns for your project.
 #
@@ -28,6 +29,7 @@ permissions:
 jobs:
   fix-permissions:
     name: Fix Script Permissions
+
     # NOTE: This example checks out the current branch explicitly.
     # The reusable workflow will create a PR that merges INTO this branch.
     # See CONTRACT section in reusable-fix-script-permissions.yml for details.
@@ -35,11 +37,12 @@ jobs:
       contents: write
       pull-requests: write
       id-token: write
-    uses: aglabo/create-pr-worktree/.github/workflows/reusable-fix-script-permissions.yml@v0.1.0
+    uses: ./.github/workflows/reusable-fix-script-permissions.yml
     with:
       files-pattern: "**/*.sh"
       files-ignore-pattern: "node_modules/**\n.git/**\nvendor/**"
       pr-branch-prefix: "fix-permissions"
+      merge-method: "never"
 
   display-results:
     name: Display Results
@@ -63,7 +66,8 @@ jobs:
             echo ""
             echo "Fixed scripts:"
             echo "${{ needs.fix-permissions.outputs.scripts }}" | while IFS= read -r script; do
-              [ -n "$script" ] && echo "  - $script"
+              [ -z "$script" ] && continue
+              echo "  - $script"
             done
           fi
 
