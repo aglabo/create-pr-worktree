@@ -67,7 +67,7 @@ jobs:
             echo ""
             echo "Fixed scripts:"
             echo "${{ needs.fix-permissions.outputs.scripts }}" | while IFS= read -r script; do
-              [ -n "$script" ] && echo "  - $script"
+              [ -n "$script" ] && echo "  - $script" || true
             done
           fi
 
