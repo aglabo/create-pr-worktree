@@ -233,7 +233,7 @@ jobs:
             fi
 
             if [ "$mode" = "100644" ]; then
-              scripts_without_exec="${scripts_without_exec}${file}\n"
+              scripts_without_exec="${scripts_without_exec}- ${file}\n"
               total_missing_perms=$((total_missing_perms + 1))
             elif [ "$mode" != "100755" ]; then
               echo "::warning::Unexpected mode for $file: $mode"
@@ -357,9 +357,8 @@ jobs:
 
             ## Changed Files
             Applied `git update-index --chmod=+x` to the following files:
-            ```
+
             ${{ steps.filter.outputs.scripts }}
-            ```
 
             ## Details
             - **Changed scripts checked**: ${{ steps.changed-scripts.outputs.all_changed_files_count }}
