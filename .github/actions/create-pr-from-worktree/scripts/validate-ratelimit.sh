@@ -251,11 +251,11 @@ handle_fetch_error() {
   # Write to GITHUB_OUTPUT
   {
     echo "status=error"
-    echo "message<<EOF"
-    echo "${message}"
-    echo "EOF"
+    echo "message=${message}"
   } >> "$GITHUB_OUTPUT"
 
+  echo "Output: status=error, message=${message}"
+  echo ""
   echo "=== Rate limit validation failed ==="
   exit "$EXIT_ERROR"
 }
@@ -284,11 +284,11 @@ handle_parse_error() {
   # Write to GITHUB_OUTPUT
   {
     echo "status=error"
-    echo "message<<EOF"
-    echo "${message}"
-    echo "EOF"
+    echo "message=${message}"
   } >> "$GITHUB_OUTPUT"
 
+  echo "Output: status=error, message=${message}"
+  echo ""
   echo "=== Rate limit validation failed ==="
   exit "$EXIT_ERROR"
 }
@@ -321,29 +321,29 @@ output_rate_limit_status() {
   case "$status" in
     error)
       message="Rate limit exhausted (${remaining}/${total} remaining)"
-      echo "::error::GitHub API rate limit exhausted. Please wait for reset." >&2
+      echo "::error::GitHub API rate limit exhausted. Please wait for reset."
       if [ "$reset_date" != "unknown" ]; then
-        echo "::error::Rate limit resets at: $reset_date" >&2
+        echo "::error::Rate limit resets at: $reset_date"
       else
         # NOTE: Validation proceeds even with unknown reset time.
         # Remaining count is authoritative; reset time is advisory only.
-        echo "::error::Rate limit reset time is unavailable" >&2
+        echo "::error::Rate limit reset time is unavailable"
       fi
       ;;
     warning)
       message="Rate limit low (${remaining}/${total} remaining)"
-      echo "::warning::GitHub API rate limit is low: $remaining / $total remaining" >&2
+      echo "::warning::GitHub API rate limit is low: $remaining / $total remaining"
       if [ "$reset_date" != "unknown" ]; then
-        echo "::warning::Rate limit resets at: $reset_date" >&2
+        echo "::warning::Rate limit resets at: $reset_date"
       else
         # NOTE: Validation proceeds even with unknown reset time.
         # Remaining count is authoritative; reset time is advisory only.
-        echo "::warning::Rate limit reset time is unavailable" >&2
+        echo "::warning::Rate limit reset time is unavailable"
       fi
       ;;
     ok)
       message="Rate limit sufficient (${remaining}/${total} remaining)"
-      echo "✓ GitHub API rate limit check passed" >&2
+      echo "✓ GitHub API rate limit check passed"
       ;;
   esac
 
@@ -376,12 +376,10 @@ write_output_and_exit() {
   # Write to GITHUB_OUTPUT
   {
     echo "status=${status}"
-    echo "message<<EOF"
-    echo "${message}"
-    echo "EOF"
+    echo "message=${message}"
   } >> "$GITHUB_OUTPUT"
 
-  echo "Rate limit status: ${status}"
+  echo "Output: status=${status}, message=${message}"
   echo ""
 
   # Display summary and exit
@@ -460,15 +458,11 @@ main() {
 
   status=$(determine_status "$remaining")
 
-  echo ">> Rate limit status: $status"
-  echo ""
-
   # ========================================
   # Output & Exit
   # ========================================
 
   message=$(output_rate_limit_status "$status" "$remaining" "$total" "$reset_date")
-  echo ">>Message: $message"
 
   write_output_and_exit "$status" "$message"
 }
