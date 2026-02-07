@@ -67,14 +67,12 @@ runs:
       if: steps.validate-gitsign.outcome == 'success'
       shell: bash
       run: |
-        # Add run-id to worktree directory to prevent conflicts during concurrent runs
-        BASE_DIR="${{ inputs.worktree-dir }}"
-        UNIQUE_SUFFIX="${{ github.run_id }}"
-        WORKTREE_DIR="${RUNNER_TEMP}/${BASE_DIR}-${UNIQUE_SUFFIX}"
+        # Set variables
+        WORKTREE_DIR="${{ runner.temp }}/${{ inputs.worktree-dir }}-${{ github.run-id }}"
+        WORKTREE_PARENT="${{ inputs.worktree-dir }}"
 
-        echo "Base directory: ${BASE_DIR}"
-        echo "Unique suffix: ${UNIQUE_SUFFIX}"
-        echo "Final worktree directory: ${WORKTREE_DIR}"
+        # Create parent directory
+        mkdir -p "${WORKTREE_PARENT}"
 
         # Check if directory already exists (should not happen with run-id suffix)
         if [ -e "${WORKTREE_DIR}" ]; then
@@ -91,21 +89,21 @@ runs:
         mkdir -p "${PARENT_DIR}"
 
         # Validate parent directory exists and is writable
-        if [ ! -d "${PARENT_DIR}" ]; then
-          echo "::error::Parent directory does not exist: ${PARENT_DIR}"
+        if [ ! -d "${WORKTREE_PARENT}" ]; then
+          echo "::error::Parent directory does not exist: ${WORKTREE_PARENT}"
           echo "::error::Cannot create worktree - parent directory must exist first"
           exit 1
         fi
 
-        if [ ! -w "${PARENT_DIR}" ]; then
-          echo "::error::Parent directory is not writable: ${PARENT_DIR}"
+        if [ ! -w "${WORKTREE_PARENT}" ]; then
+          echo "::error::Parent directory is not writable: ${WORKTREE_PARENT}"
           echo "::error::Cannot create worktree - insufficient permissions"
           exit 1
         fi
 
         echo "✓ Worktree directory validation passed"
         echo "  Target: ${WORKTREE_DIR}"
-        echo "  Parent: ${PARENT_DIR} (exists and writable)"
+        echo "  Parent: ${WORKTREE_PARENT} (exists and writable)"
 
         # Output the final worktree directory for next steps
         echo "worktree-dir=${WORKTREE_DIR}" >> $GITHUB_OUTPUT
@@ -163,8 +161,7 @@ runs:
         fi
 
         # Get absolute path
-        WORKTREE_PATH=$(cd "${WORKTREE_DIR}" && pwd)
-        echo "worktree-path=${WORKTREE_PATH}" >> $GITHUB_OUTPUT
+        echo "worktree-path=${WORKTREE_DIR}" >> $GITHUB_OUTPUT
         echo "status=success" >> $GITHUB_OUTPUT
         echo "message=Worktree created successfully" >> $GITHUB_OUTPUT
         echo "✓ Worktree created at: ${WORKTREE_PATH}"
