@@ -1,0 +1,109 @@
+# src: ./.github/actions/validate-environment/action.yml
+# @(#) : composite GitHub Action to validate runner environment
+#
+# Copyright (c) 2026- aglabo <https://github.com/aglabo>
+#
+# This software is released under the MIT License.
+# https://opensource.org/licenses/MIT
+
+name: "Validate Environment"
+description: |
+  Validate GitHub Actions runner environment.
+  REQUIREMENTS: Linux only, GitHub-hosted runners only (ubuntu-latest, ubuntu-22.04, etc.)
+  NOT SUPPORTED: Windows, macOS, self-hosted runners
+  (Note: ARM64 validated on Linux if GitHub provides ARM64 runners)
+  Validates: OS/architecture, Git, curl, optional applications
+author: "aglabo"
+
+branding:
+  icon: "check-circle"
+  color: "green"
+
+inputs:
+  architecture:
+    description: "Expected runner architecture (canonical format): 'amd64' or 'arm64'. Script normalizes uname -m output (x86_64→amd64, aarch64→arm64). Default: amd64"
+    required: false
+    default: "amd64"
+  additional-apps:
+    description: |
+      Additional applications to validate beyond default (Git, curl).
+      Format: Newline-separated list of pipe-delimited (|) definitions.
+      Each definition: cmd|app_name|version_extractor|min_version
+
+      version_extractor types (prefix-typed, safe sed-only):
+        - field:N = Extract Nth field (space-delimited) from --version output
+        - regex:PATTERN = sed -E with capture group \1 (use # as delimiter internally)
+        - (empty) = Auto-extract semver (X.Y or X.Y.Z pattern)
+
+      min_version: Minimum required version (empty = skip check, show warning)
+
+      Single app: "gh|gh|regex:version ([0-9.]+)|2.0"
+      Multiple apps (use YAML multiline string):
+        additional-apps: |
+          gh|gh|regex:version ([0-9.]+)|2.0
+          node|Node.js|regex:v([0-9.]+)|18.0
+
+      Security: NO eval usage, sed-only extraction, prefix-typed extractors prevent injection
+    required: false
+    default: ""
+
+outputs:
+  os-status:
+    description: "OS validation status (success or error)"
+    value: ${{ steps.validate-os.outputs.status }}
+  os-message:
+    description: "OS validation message"
+    value: ${{ steps.validate-os.outputs.message }}
+  apps-status:
+    description: "Applications validation status (success or error)"
+    value: ${{ steps.validate-apps.outputs.status }}
+  apps-message:
+    description: "Applications validation message"
+    value: ${{ steps.validate-apps.outputs.message }}
+  validated-apps:
+    description: "Comma-separated list of validated application names"
+    value: ${{ steps.validate-apps.outputs.validated_apps }}
+  validated-count:
+    description: "Number of successfully validated applications"
+    value: ${{ steps.validate-apps.outputs.validated_count }}
+  failed-apps:
+    description: "Comma-separated list of failed application names (empty if all passed)"
+    value: ${{ steps.validate-apps.outputs.failed_apps }}
+  failed-count:
+    description: "Number of failed applications (0 if all passed)"
+    value: ${{ steps.validate-apps.outputs.failed_count }}
+
+runs:
+  using: "composite"
+  steps:
+    # Output mechanism:
+    # 1. Scripts write to $GITHUB_OUTPUT (key=value format)
+    # 2. Outputs automatically available as steps.<step-id>.outputs.<key>
+    # 3. Top-level outputs: section references step outputs for external access
+    - name: "Validate OS and environment variables"
+      id: validate-os
+      shell: bash
+      env:
+        EXPECTED_ARCHITECTURE: ${{ inputs.architecture }}
+      run: |
+        set -euo pipefail
+        "${GITHUB_ACTION_PATH}/scripts/validate-git-runner.sh"
+      # Outputs: status, message (written to $GITHUB_OUTPUT by script)
+
+    - name: "Validate required applications"
+      id: validate-apps
+      shell: bash
+      env:
+        ADDITIONAL_APPS: ${{ inputs.additional-apps }}
+      run: |
+        set -euo pipefail
+        if [ -n "${ADDITIONAL_APPS}" ]; then
+          # Parse newline-separated app definitions into array
+          # Each definition format: cmd|app_name|version_extractor|min_version
+          # Filter out empty lines and pass as separate arguments
+          readarray -t app_defs < <(echo "${ADDITIONAL_APPS}" | grep -v '^[[:space:]]*$')
+          "${GITHUB_ACTION_PATH}/scripts/validate-apps.sh" "${app_defs[@]}"
+        else
+          "${GITHUB_ACTION_PATH}/scripts/validate-apps.sh"
+        fi
+      # Outputs: status, message, validated_apps, validated_count, failed_apps, failed_count
