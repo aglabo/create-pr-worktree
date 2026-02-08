@@ -265,7 +265,7 @@ jobs:
         uses: ./.github/actions/pr-worktree-setup
         with:
           branch-name: ${{ steps.vars.outputs.pr-branch }}
-          worktree-dir: ${{ runner.temp }}/${{ steps.vars.outputs.worktree-dir }}
+          worktree-dir: ${{ steps.vars.outputs.worktree-dir }}
 
       # ============================================
       # Permission Application
