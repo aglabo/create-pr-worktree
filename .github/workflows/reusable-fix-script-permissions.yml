@@ -94,7 +94,7 @@ jobs:
       # ============================================
       - name: Validate runner environment and required tools
         id: validate-env
-        uses: aglabo/.github/.github/actions/validate-environment@r1.2.2
+        uses: ./.github/actions/validate-environment
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
