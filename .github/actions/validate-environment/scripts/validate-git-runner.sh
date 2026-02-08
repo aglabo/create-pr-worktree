@@ -122,28 +122,44 @@ validate_expected_arch() {
 validate_detected_arch() {
   DETECTED_ARCH=$(uname -m)
 
-  [[ ! normalize_architecture "${DETECTED_ARCH}" ]] && return 1 || return 0
+  if ! normalize_architecture "${DETECTED_ARCH}"; then
+    return 1
+  fi
+
+  return 0
 }
 
 # @description Validate architecture matches expected value
 # @exitcode 0 EXPECTED_ARCH matches NORMALIZED_ARCH
 # @exitcode 1 Architecture mismatch
 validate_arch_match() {
-  [[ "${EXPECTED_ARCH}" != "${NORMALIZED_ARCH}" ]] && return 1 || return 0
+  if [ "${EXPECTED_ARCH}" != "${NORMALIZED_ARCH}" ]; then
+    return 1
+  fi
+
+  return 0
 }
 
 # @description Validate GitHub Actions environment
 # @exitcode 0 GITHUB_ACTIONS environment variable is set to 'true'
 # @exitcode 1 Not running in GitHub Actions environment
 validate_github_actions_env() {
-  [[ ! check_env_var "GITHUB_ACTIONS" "true" ]] && return 1 || return 0
+  if ! check_env_var "GITHUB_ACTIONS" "true"; then
+    return 1
+  fi
+
+  return 0
 }
 
 # @description Validate GitHub-hosted runner
 # @exitcode 0 RUNNER_ENVIRONMENT is set to 'github-hosted'
 # @exitcode 1 Self-hosted runner or RUNNER_ENVIRONMENT not set correctly
 validate_github_hosted_runner() {
-  [[ ! check_env_var "RUNNER_ENVIRONMENT" "github-hosted" ]] && return 1 || return 0
+  if ! check_env_var "RUNNER_ENVIRONMENT" "github-hosted"; then
+    return 1
+  fi
+
+  return 0
 }
 
 # @description Validate required runtime variables
