@@ -97,11 +97,7 @@ check_env_var() {
 validate_os() {
   DETECTED_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 
-  if [ "${DETECTED_OS}" != "linux" ]; then
-    return 1
-  fi
-
-  return 0
+  [[ "${DETECTED_OS}" != "linux" ]] && return 1 || return 0
 }
 
 # @description Validate expected architecture input
@@ -126,44 +122,28 @@ validate_expected_arch() {
 validate_detected_arch() {
   DETECTED_ARCH=$(uname -m)
 
-  if ! normalize_architecture "${DETECTED_ARCH}"; then
-    return 1
-  fi
-
-  return 0
+  [[ ! normalize_architecture "${DETECTED_ARCH}" ]] && return 1 || return 0
 }
 
 # @description Validate architecture matches expected value
 # @exitcode 0 EXPECTED_ARCH matches NORMALIZED_ARCH
 # @exitcode 1 Architecture mismatch
 validate_arch_match() {
-  if [ "${EXPECTED_ARCH}" != "${NORMALIZED_ARCH}" ]; then
-    return 1
-  fi
-
-  return 0
+  [[ "${EXPECTED_ARCH}" != "${NORMALIZED_ARCH}" ]] && return 1 || return 0
 }
 
 # @description Validate GitHub Actions environment
 # @exitcode 0 GITHUB_ACTIONS environment variable is set to 'true'
 # @exitcode 1 Not running in GitHub Actions environment
 validate_github_actions_env() {
-  if ! check_env_var "GITHUB_ACTIONS" "true"; then
-    return 1
-  fi
-
-  return 0
+  [[ ! check_env_var "GITHUB_ACTIONS" "true" ]] && return 1 || return 0
 }
 
 # @description Validate GitHub-hosted runner
 # @exitcode 0 RUNNER_ENVIRONMENT is set to 'github-hosted'
 # @exitcode 1 Self-hosted runner or RUNNER_ENVIRONMENT not set correctly
 validate_github_hosted_runner() {
-  if ! check_env_var "RUNNER_ENVIRONMENT" "github-hosted"; then
-    return 1
-  fi
-
-  return 0
+  [[ ! check_env_var "RUNNER_ENVIRONMENT" "github-hosted" ]] && return 1 || return 0
 }
 
 # @description Validate required runtime variables
@@ -198,8 +178,10 @@ validate_git_runner() {
     echo "::error::Unsupported operating system: ${DETECTED_OS}" >&2
     echo "::error::This action requires Linux" >&2
     echo "::error::Please use a Linux runner (e.g., ubuntu-latest)" >&2
-    echo "status=error" >> "$GITHUB_OUTPUT_FILE"
-    echo "message=Unsupported OS: ${DETECTED_OS} (Linux required)" >> "$GITHUB_OUTPUT_FILE"
+    {
+      echo "status=error"
+      echo "message=Unsupported OS: ${DETECTED_OS} (Linux required)"
+    } >> "$GITHUB_OUTPUT_FILE"
     exit 1
   fi
 
@@ -211,8 +193,10 @@ validate_git_runner() {
   if ! validate_expected_arch; then
     echo "::error::Invalid architecture input: ${EXPECTED_ARCH}" >&2
     echo "::error::Supported values: amd64, arm64" >&2
-    echo "status=error" >> "$GITHUB_OUTPUT_FILE"
-    echo "message=Invalid architecture input: ${EXPECTED_ARCH}" >> "$GITHUB_OUTPUT_FILE"
+    {
+      echo "status=error"
+      echo "message=Invalid architecture input: ${EXPECTED_ARCH}"
+    } >> "$GITHUB_OUTPUT_FILE"
     exit 1
   fi
 
@@ -222,8 +206,10 @@ validate_git_runner() {
   if ! validate_detected_arch; then
     echo "::error::Unsupported architecture: ${DETECTED_ARCH}" >&2
     echo "::error::Supported architectures: amd64 (x86_64), arm64 (aarch64)" >&2
-    echo "status=error" >> "$GITHUB_OUTPUT_FILE"
-    echo "message=Unsupported architecture: ${DETECTED_ARCH}" >> "$GITHUB_OUTPUT_FILE"
+    {
+      echo "status=error"
+      echo "message=Unsupported architecture: ${DETECTED_ARCH}"
+    } >> "$GITHUB_OUTPUT_FILE"
     exit 1
   fi
 
@@ -235,8 +221,10 @@ validate_git_runner() {
     echo "::error::Expected: ${EXPECTED_ARCH}" >&2
     echo "::error::Detected: ${NORMALIZED_ARCH} (${DETECTED_ARCH})" >&2
     echo "::error::Please use a runner with ${EXPECTED_ARCH} architecture" >&2
-    echo "status=error" >> "$GITHUB_OUTPUT_FILE"
-    echo "message=Architecture mismatch: expected ${EXPECTED_ARCH}, got ${NORMALIZED_ARCH}" >> "$GITHUB_OUTPUT_FILE"
+    {
+      echo "status=error"
+      echo "message=Architecture mismatch: expected ${EXPECTED_ARCH}, got ${NORMALIZED_ARCH}"
+    } >> "$GITHUB_OUTPUT_FILE"
     exit 1
   fi
 
@@ -250,8 +238,10 @@ validate_git_runner() {
     echo "::error::Not running in GitHub Actions environment" >&2
     echo "::error::This action must run in a GitHub Actions workflow" >&2
     echo "::error::GITHUB_ACTIONS environment variable is not set to 'true'" >&2
-    echo "status=error" >> "$GITHUB_OUTPUT_FILE"
-    echo "message=Not running in GitHub Actions environment" >> "$GITHUB_OUTPUT_FILE"
+    {
+      echo "status=error"
+      echo "message=Not running in GitHub Actions environment"
+    } >> "$GITHUB_OUTPUT_FILE"
     exit 1
   fi
 
@@ -261,8 +251,10 @@ validate_git_runner() {
     echo "::error::This action requires a GitHub-hosted runner" >&2
     echo "::error::Self-hosted runners are not supported" >&2
     echo "::error::RUNNER_ENVIRONMENT is not set to 'github-hosted' (current: ${RUNNER_ENVIRONMENT:-unset})" >&2
-    echo "status=error" >> "$GITHUB_OUTPUT_FILE"
-    echo "message=Requires GitHub-hosted runner (not self-hosted)" >> "$GITHUB_OUTPUT_FILE"
+    {
+      echo "status=error"
+      echo "message=Requires GitHub-hosted runner (not self-hosted)"
+    } >> "$GITHUB_OUTPUT_FILE"
     exit 1
   fi
 
@@ -271,8 +263,10 @@ validate_git_runner() {
   if ! validate_runtime_variables; then
     echo "::error::Required environment variables are not set" >&2
     echo "::error::This action must run in a GitHub Actions environment" >&2
-    echo "status=error" >> "$GITHUB_OUTPUT_FILE"
-    echo "message=Missing required environment variables" >> "$GITHUB_OUTPUT_FILE"
+    {
+      echo "status=error"
+      echo "message=Missing required environment variables"
+    } >> "$GITHUB_OUTPUT_FILE"
     exit 1
   fi
 
