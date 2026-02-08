@@ -448,25 +448,13 @@ EOF
       fi
     fi
 
-    # Get full version string
-    local VERSION=$("$cmd" --version 2>&1 | head -1)
-    echo "  ✓ ${VERSION}" >&2
-    echo "" >&2
+    # Perform tool-specific validation checks (e.g., gh auth)
+    local special_check_result=0
+    validate_app_special "$cmd" "$app_name" || special_check_result=$?
 
-    # Store app name and version separately (structured data)
-    VALIDATED_APPS+=("${app_name}")
-    VALIDATED_VERSIONS+=("${VERSION}")
-
-    # Check minimum version if min_ver is specified
-    # (version_extractor defaults to semver auto-extraction if empty)
-    if [ -n "$min_ver" ]; then
-      # Extract version number from full version string
-      local version_num=$(extract_version_number "$VERSION" "$version_extractor")
-
-      # Validate version against minimum requirement
-      if ! check_version "$version_num" "$min_ver"; then
-        local error_msg="${app_name} version ${version_num} is below minimum required ${min_ver}"
-        echo "::error::${error_msg}" >&2
+    if [ $special_check_result -ne 0 ]; then
+      # Error message already set in SPECIAL_VALIDATION_ERROR global
+      local error_msg="${SPECIAL_VALIDATION_ERROR}"
 
       if [ "$FAIL_FAST" = "true" ]; then
         {
@@ -476,12 +464,13 @@ EOF
         exit 1
       else
         VALIDATION_ERRORS+=("${error_msg}")
-        continue
+        continue  # Skip to next app
       fi
-    else
-      # Version check skipped (no extractor or min_version specified)
-      echo "  ::warning::${app_name}: version check skipped (no minimum version specified)" >&2
     fi
+
+    # Store app name and version separately (structured data)
+    VALIDATED_APPS+=("${app_name}")
+    VALIDATED_VERSIONS+=("${VALIDATED_VERSION}")
   done
 }
 
